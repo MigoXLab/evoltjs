@@ -91,6 +91,7 @@ npm run build
 ### Run Examples  
 
 > ⚠️ **Note**: Files in `examples/agent/` require `BOYUE_API_KEY` and `BOYUE_API_URL` to be set in the `.env` file. 
+> 
 > ⚠️ **Note**: To use another provider, simply adjust the configuration in `examples/agent/modelConfig.ts`.
 
 ```bash  
