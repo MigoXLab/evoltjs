@@ -1,5 +1,7 @@
 # Evoltjs
 
+[English](README.md) | [中文](doc/README_ZH.md)
+
 Evolt is an AI Agent framework with autonomous evolution capability.
 
 ## Installation  
