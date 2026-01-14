@@ -59,7 +59,6 @@ models:
 mcpServers:
   playwright:
     command: "npx"
-    url: "http://localhost:8931/stdio"
     args:
       - -y
       - "@playwright/mcp@latest"
