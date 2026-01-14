@@ -15,66 +15,66 @@ import { logger } from '../utils';
  */
 @tools({
     execute: {
-        description: '在后台执行bash命令（不阻塞返回结果）。',
+        description: 'Execute bash command in background (non-blocking, returns result).',
         params: [
-            { name: 'command', type: 'str', description: '要执行的bash命令' },
+            { name: 'command', type: 'str', description: 'The bash command to execute' },
             {
                 name: 'cwd',
                 type: 'Optional[str]',
-                description: '工作目录，如果为None则使用当前目录',
+                description: 'Working directory, uses current directory if None',
                 optional: true,
             },
             {
                 name: 'env',
                 type: 'Optional[Dict[str, str]]',
-                description: '环境变量字典，如果为None则使用当前环境',
+                description: 'Environment variables dictionary, uses current environment if None',
                 optional: true,
             },
         ],
-        returns: { type: 'str', description: '后台进程启动信息，包含进程ID和PID' },
+        returns: { type: 'str', description: 'Background process startup information, including process ID and PID' },
     },
     list: {
-        description: '列出所有后台进程。',
-        returns: { type: 'str', description: '所有后台进程的信息' },
+        description: 'List all background processes.',
+        returns: { type: 'str', description: 'Information about all background processes' },
     },
     stop: {
-        description: '停止指定的后台进程。',
+        description: 'Stop the specified background process.',
         params: [
-            { name: 'processId', type: 'str', description: '要停止的进程ID' },
+            { name: 'processId', type: 'str', description: 'The process ID to stop' },
             {
                 name: 'force',
                 type: 'bool',
-                description: '是否强制杀死进程（使用SIGKILL）',
+                description: 'Whether to force kill the process (using SIGKILL)',
                 optional: true,
             },
         ],
-        returns: { type: 'str', description: '停止进程的结果信息' },
+        returns: { type: 'str', description: 'Result information of stopping the process' },
     },
     cleanup: {
-        description: '清理所有后台进程。',
-        returns: { type: 'str', description: '清理结果信息' },
+        description: 'Clean up all background processes.',
+        returns: { type: 'str', description: 'Cleanup result information' },
     },
 })
 export class CommandLineTool {
     async execute(command: string, cwd?: string, env?: Record<string, string>): Promise<string> {
         try {
-            // 设置工作目录
+            // Set working directory
             const workDir: string = cwd || process.cwd();
 
             // Check if directory exists
             try {
                 const fs = await import('fs');
                 if (!fs.existsSync(workDir)) {
-                    return `工作目录不存在: ${workDir}`;
+                    return `Working directory does not exist: ${workDir}`;
                 }
             } catch (error) {
-                return `无法访问工作目录: ${workDir}`;
+                return `Cannot access working directory: ${workDir}`;
             }
 
-            // 设置环境变量
+            // Set environment variables
             const execEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
 
-            // 启动进程 (avoid naming conflict with global process)
+            // Start process (avoid naming conflict with global process)
             const childProcess: ChildProcess = spawn(command, {
                 shell: true,
                 cwd: workDir,
@@ -82,19 +82,19 @@ export class CommandLineTool {
                 stdio: ['pipe', 'pipe', 'pipe'],
             });
 
-            // 获取当前的 ToolcallManager 并注册进程
+            // Get current ToolcallManager and register process
             const manager = getCurrentManager();
             if (!manager) {
-                throw new ToolExecutionError('无法获取 ToolcallManager，请通过 ToolcallManager 执行此工具');
+                throw new ToolExecutionError('Cannot get ToolcallManager, please execute this tool through ToolcallManager');
             }
 
             const processId = manager.registerBackgroundProcess(childProcess, command, workDir);
             logger.debug(`Register background process: Command: ${command}\n Process ID: ${processId}`);
 
-            // 等待最多5秒获取执行结果
+            // Wait up to 5 seconds to get execution result
             return new Promise(resolve => {
                 const timeout = setTimeout(async () => {
-                    // 5秒后进程仍在运行
+                    // Process is still running after 5 seconds
                     resolve(
                         `COMMAND: ${command}\n` +
                             `PROCESS ID: ${processId}\n` +
@@ -160,14 +160,14 @@ export class CommandLineTool {
     }
 
     /**
-     * 停止指定的后台进程。
+     * Stop the specified background process.
      *
      * Args:
-     *     process_id (str): 要停止的进程ID
-     *     force (bool): 是否强制杀死进程（使用SIGKILL）
+     *     process_id (str): The process ID to stop
+     *     force (bool): Whether to force kill the process (using SIGKILL)
      *
      * Returns:
-     *     str: 操作结果的自然语言描述
+     *     str: Natural language description of the operation result
      */
     async stop(processId: string, force: boolean = false): Promise<string> {
         const manager = getCurrentManager();
