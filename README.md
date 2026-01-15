@@ -2,7 +2,43 @@
 
 [English](README.md) | [中文](doc/README_ZH.md)
 
-Evolt is an AI Agent framework with autonomous evolution capability.
+Today’s AI coding tools solve **one-shot code generation**.
+But the real cost of software lies in **long-term evolution**: changing requirements, architectural drift, and endless maintenance — turning top engineers into permanent system caretakers.
+
+**EVOLT exists to end this.**
+
+EVOLT is a framework for **self-evolving agents** that enables AI to **own the full software lifecycle** — from initial construction, to long-term maintenance, to continuous evolution.
+
+We are not building another code assistant.
+We are solving the core problem of **long-horizon software engineering**.
+
+---
+
+## 🏗️ Core Architecture (Vision)
+
+EVOLT is built around a **self-evolving improvement engine** with three layers:
+
+* 🛠️ **Tool-using agents** — Agents that can read, write, test, and refactor real codebases like software engineers.
+* 💾 **Persistent experience** — Successful actions and patterns are encoded as reusable, composable knowledge assets. *(Planned)*
+* 🧠 **Self-evolution** — Agent strategies and workflows continuously improve through experience. *(Planned)*
+
+---
+
+## ✅ Current Status
+
+EVOLT has already open-sourced and stabilized its core foundation: **tool-using agents**.
+You can today build AI agents that understand and operate on real code repositories.
+
+We are actively designing and developing **self-evolution** and **persistent experience**.
+The full roadmap is public — contributions and discussion are welcome.
+
+---
+
+## 🚀 Why Start with Tools?
+
+We believe that powerful, programmable tool-use is the foundation of long-term autonomy.
+Before an agent can learn how to improve itself, it must first be able to **act reliably in the real world** — just like a human engineer working on a live codebase.
+
 
 ## Installation  
 
