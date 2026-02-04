@@ -6,7 +6,7 @@ import { PostProcessor } from './hooks';
 
 // Message types
 export interface Message {
-    role: 'system' | 'user' | 'assistant';
+    role: 'system' | 'user' | 'assistant' | 'tool';
     content: string;
     images?: string | string[];
     type?: string;
