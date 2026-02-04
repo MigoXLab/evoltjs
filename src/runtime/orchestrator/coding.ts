@@ -1,26 +1,37 @@
 /**
- * Coding environment for agent management
+ * Coding orchestrator for multi-agent management
  *
- * Converts Python's environment/coding.py to TypeScript
+ * Renamed from CodingEnvironment to CodingOrchestrator in 0.2.x
+ * Converts Python's runtime/orchestrator/coding.py to TypeScript
  */
 
 import * as fs from 'fs';
-import { BaseEnvironment } from './base';
-import { Agent } from '../agent';
-import { WORKSPACE_DIR } from '../configs/paths';
-import { logger } from '../utils';
+import { BaseOrchestrator } from './base';
+import { Agent } from '../../core/agent';
+import { WORKSPACE_DIR } from '../../configs/paths';
+import { logger } from '../../utils';
 
 /**
- * Environment for coding
+ * Orchestrator for coding tasks
+ *
+ * Renamed from CodingEnvironment in Python 0.2.x.
+ * Extends BaseOrchestrator with workspace directory management.
  */
-export class CodingEnvironment extends BaseEnvironment {
+export class CodingOrchestrator extends BaseOrchestrator {
     /**
      * Workspace directory
      */
     workspaceDir: string = '';
 
-    constructor(agents: Agent[] = [], agentSkills: Record<string, string[]> = {}, workspaceDir: string = '') {
-        super(agents, agentSkills);
+    constructor(options: {
+        agents?: Agent[];
+        agentSkills?: Record<string, string[]>;
+        workspaceDir?: string;
+        alwaysWaitHumanInput?: boolean;
+        maxRounds?: number;
+    } = {}) {
+        const { workspaceDir = '', ...baseOptions } = options;
+        super(baseOptions);
         this.workspaceDir = workspaceDir;
         this.setWorkspaceDir();
     }
@@ -56,3 +67,8 @@ export class CodingEnvironment extends BaseEnvironment {
         }
     }
 }
+
+/**
+ * @deprecated Use CodingOrchestrator instead. This alias is kept for backward compatibility.
+ */
+export const CodingEnvironment = CodingOrchestrator;

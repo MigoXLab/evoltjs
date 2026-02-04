@@ -1,13 +1,14 @@
 /**
- * Base environment for agent management
+ * Base orchestrator for multi-agent management
  *
- * Converts Python's environment/base.py to TypeScript
+ * Renamed from BaseEnvironment to BaseOrchestrator in 0.2.x
+ * Converts Python's runtime/orchestrator/base.py to TypeScript
  */
 
-import { Agent } from '../agent';
-import { SkillsTool } from '../tools/skills';
-import { SKILLS_DIR } from '../configs/paths';
-import { logger } from '../utils';
+import { Agent } from '../../core/agent';
+import { SkillsTool } from '../../tools/skills';
+import { SKILLS_DIR } from '../../configs/paths';
+import { logger } from '../../utils';
 
 /**
  * Instruction type enumeration
@@ -21,11 +22,14 @@ export enum InstructionType {
 }
 
 /**
- * Environment for the agent
+ * Base orchestrator for multi-agent coordination
+ *
+ * Renamed from BaseEnvironment in Python 0.2.x.
+ * The old "Environment" name now refers to evaluation environments used by Reflexion.
  */
-export class BaseEnvironment {
+export class BaseOrchestrator {
     /**
-     * List of agents in the environment
+     * List of agents in the orchestrator
      */
     agents: Agent[] = [];
 
@@ -34,9 +38,33 @@ export class BaseEnvironment {
      */
     agentSkills: Record<string, string[]> = {};
 
-    constructor(agents: Agent[] = [], agentSkills: Record<string, string[]> = {}) {
+    /**
+     * Whether to always wait for human input
+     */
+    alwaysWaitHumanInput: boolean = false;
+
+    /**
+     * Maximum number of rounds for agent execution
+     */
+    maxRounds: number = 100;
+
+    constructor(options: {
+        agents?: Agent[];
+        agentSkills?: Record<string, string[]>;
+        alwaysWaitHumanInput?: boolean;
+        maxRounds?: number;
+    } = {}) {
+        const {
+            agents = [],
+            agentSkills = {},
+            alwaysWaitHumanInput = false,
+            maxRounds = 100,
+        } = options;
+
         this.agents = agents;
         this.agentSkills = agentSkills;
+        this.alwaysWaitHumanInput = alwaysWaitHumanInput;
+        this.maxRounds = maxRounds;
         this.setAgentSkills();
     }
 
@@ -130,11 +158,23 @@ export class BaseEnvironment {
     }
 
     /**
+     * Shutdown all agent executors
+     */
+    async shutdownAllExecutors(options?: { wait?: boolean }): Promise<void> {
+        const wait = options?.wait ?? true;
+        for (const agent of this.agents) {
+            // Future: when agents have executors, shut them down here
+            // await agent.executor?.shutdown({ wait });
+        }
+        logger.debug('All agent executors shutdown');
+    }
+
+    /**
      * Run with a single goal until completion (non-interactive mode)
      */
     async runGoal(goal: string): Promise<void> {
         if (this.agents.length === 0) {
-            logger.error('No agents in the environment.');
+            logger.error('No agents in the orchestrator.');
             return;
         }
 
@@ -170,9 +210,16 @@ export class BaseEnvironment {
     }
 
     /**
-     * Run the environment (interactive mode)
+     * Run the orchestrator (interactive mode)
      */
-    async run(): Promise<void> {
+    async run(instruction?: string): Promise<void> {
+        // If instruction provided, run in non-interactive mode
+        if (instruction) {
+            await this.runGoal(instruction);
+            return;
+        }
+
+        // Interactive mode
         const readline = await import('readline');
         const rl = readline.createInterface({
             input: process.stdin,
@@ -189,21 +236,21 @@ export class BaseEnvironment {
             while (true) {
                 try {
                     // Get instruction from user
-                    let instruction: string;
+                    let userInstruction: string;
                     if (this.agents.length === 0) {
-                        logger.error('No agents in the environment.');
+                        logger.error('No agents in the orchestrator.');
                         break;
                     } else if (this.agents.length === 1) {
-                        instruction = await question("Enter your instruction (or '/q' to quit): ");
+                        userInstruction = await question("Enter your instruction (or '/q' to quit): ");
                     } else {
                         const agentNames = this.agents.map(agent => agent.name).join(', ');
-                        instruction = await question(
+                        userInstruction = await question(
                             `Enter your instruction with '@agent_name' (or '/q' to quit), available agents: ${agentNames}: `
                         );
                     }
 
                     const [instructionType, processedInstruction] = this.postProcessInstruction(
-                        instruction,
+                        userInstruction,
                         this.agents.map(agent => agent.name)
                     );
 
@@ -231,3 +278,8 @@ export class BaseEnvironment {
         }
     }
 }
+
+/**
+ * @deprecated Use BaseOrchestrator instead. This alias is kept for backward compatibility.
+ */
+export const BaseEnvironment = BaseOrchestrator;
