@@ -36,8 +36,8 @@ export {
     GitTool,
 } from './tools';
 
-// Environment exports
-export { BaseEnvironment, CodingEnvironment } from './environment';
+// Orchestrator exports
+export { BaseOrchestrator, CodingOrchestrator } from './runtime/orchestrator';
 
 // Config exports
 export { loadModelConfig } from './configs/configLoader';
