@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import * as path from 'path';
 import * as fs from 'fs';
 import { Model } from './model';
-import { MessageHistory } from '../memory/messageHistory';
+import { MessageHistory } from '../runtime/memory';
 import { ToolcallManager } from '../tools/toolcallManager';
 // IMPORTANT: Import from "../tools" to trigger tool registration via decorators
 // Now using TypeScript-native decorator system

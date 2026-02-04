@@ -1,11 +1,11 @@
 /**
  * Message history management
  *
- * Converts Python's message_history.py to TypeScript
+ * Converts Python's runtime/memory/message_history.py to TypeScript
  */
 
-import { Message } from '../schemas/message';
-import { Message as MessageType } from '../types';
+import { Message } from '../../schemas/message';
+import { Message as MessageType } from '../../types';
 
 /**
  * Message history class for managing conversation context

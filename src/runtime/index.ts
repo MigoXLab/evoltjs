@@ -9,7 +9,7 @@
  * - orchestrator: Multi-agent coordination
  */
 
-export { MessageHistory } from '../memory/messageHistory';
+export * from './memory';
 // export * from './executors';
 // export * from './state';
 // export * from './environment';

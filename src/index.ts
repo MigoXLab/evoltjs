@@ -10,7 +10,7 @@ import './tools';
 export { Agent } from './core/agent';
 export { Model } from './core/model';
 export { Message, Toolcall, ToolcallState, ToolcallType } from './schemas';
-export { MessageHistory } from './memory/messageHistory';
+export { MessageHistory } from './runtime/memory';
 
 // Hooks exports
 export { PostProcessor } from './hooks';
