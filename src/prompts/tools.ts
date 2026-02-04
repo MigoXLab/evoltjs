@@ -22,7 +22,81 @@ Please analyze the format discrepancies and re-output, ensuring:
 Re-output:  
 `;
 
-export const OUTPUT_FORMAT_PROMPT = `<System Tools OutputFormat>
+/**
+ * Simplified output format prompt (aligned with Python 0.2.2)
+ *
+ * This version removes the task classification (Generative/Analytical/Operational)
+ * and uses a unified react-style format.
+ */
+export const OUTPUT_FORMAT_PROMPT = `<OutputFormat>
+
+You should use one tool or multiple tools (depends on your task), follow the format below, replace the <ToolName.method_name> and <args_name> with the actual tool name.
+
+Thought: ...
+Action: <ToolName1.method_name1><args_name1>args_value1</args_name1><args_name2>args_value2</args_name2>...</ToolName1.method_name1>
+
+**YOUR OUTPUT MUST INCLUDE THE ACTUAL <args_name> AND <args_value>!!!**
+**If the task is completed, simply return the completion information like <TaskCompletion>your_completion_information</TaskCompletion>, No any tool call should be included.**
+</OutputFormat>
+`;
+
+/**
+ * Tools prompt template (new name aligned with Python 0.2.2)
+ *
+ * Placeholders:
+ * - {available_tools}: List of available tool names
+ * - {desc_of_tools}: Descriptions of available tools
+ * - {output_format}: Output format instructions
+ */
+export const TOOLS_PROMPT = `
+## Tools And Tool Calls Format
+
+Tools are represented by a predefined XML-like syntax structure. This structure encapsulates parameter lists within tags such as \`<ToolName.method_name>\`. 
+By identifying and matching keywords inside these tags, the system automatically parses the target tool name and its corresponding input parameter values to execute subsequent tool calls.
+
+### Available Tools
+{available_tools}
+
+### Description of Available Tools
+{desc_of_tools}
+
+### Output Format
+{output_format}
+`;
+
+/**
+ * System tools prompt template (legacy name, kept for backward compatibility)
+ *
+ * @deprecated Use TOOLS_PROMPT instead. This is an alias with camelCase placeholders.
+ *
+ * Placeholders:
+ * - {availableSystemTools}: List of available tool names
+ * - {descOfSystemTools}: Descriptions of available tools
+ * - {outputFormat}: Output format instructions
+ */
+export const SYSTEM_TOOLS_PROMPT = `
+## System Tools And System Tools Call Format
+
+System Tools are represented by a predefined XML-like syntax structure. This structure encapsulates parameter lists within tags such as \`<ToolName.method_name>\`.
+By identifying and matching keywords inside these tags, the system automatically parses the target tool name and its corresponding input parameter values to execute subsequent tool calls.
+
+### Available System Tools
+{availableSystemTools}
+
+### Description of Available System Tools
+{descOfSystemTools}
+
+### System Tools Output Format
+{outputFormat}
+`;
+
+/**
+ * Legacy output format prompt with task classification
+ *
+ * @deprecated This version includes task classification (Generative/Analytical/Operational)
+ * which has been removed in Python 0.2.2. Use OUTPUT_FORMAT_PROMPT instead.
+ */
+export const OUTPUT_FORMAT_PROMPT_LEGACY = `<System Tools OutputFormat>
 
 We have three types of tasks: Generative Tasks, Analytical Tasks, and Operational Tasks.
 You should choose the appropriate task type based on the task description.
@@ -85,20 +159,4 @@ You should follow the format below, replace the <ToolName.method_name> and <args
 **YOUR OUTPUT MUST INCLUDE THE ACTUAL <args_name> AND <args_value>!!!**
 **If the task is completed, simply return the completion information like <TaskCompletion>your_completion_information</TaskCompletion>, No any tool call should be included.**
 </System Tools OutputFormat>
-`;
-
-export const SYSTEM_TOOLS_PROMPT = `
-## System Tools And System Tools Call Format
-
-System Tools are represented by a predefined XML-like syntax structure. This structure encapsulates parameter lists within tags such as \`<ToolName.method_name>\`.
-By identifying and matching keywords inside these tags, the system automatically parses the target tool name and its corresponding input parameter values to execute subsequent tool calls.
-
-### Available System Tools
-{availableSystemTools}
-
-### Description of Available System Tools
-{descOfSystemTools}
-
-### System Tools Output Format
-{outputFormat}
 `;
