@@ -1,22 +1,26 @@
 /**
  * Main Agent class with tool use capabilities
  *
- * Converts Python's agent.py to TypeScript
+ * Converts Python's core/agent.py to TypeScript
  */
 
+import { v4 as uuidv4 } from 'uuid';
+import * as path from 'path';
+import * as fs from 'fs';
 import { Model } from './model';
-import { MessageHistory } from './memory';
-import { ToolcallManager } from './tools/toolcallManager';
-// IMPORTANT: Import from "./tools" to trigger tool registration via decorators
+import { MessageHistory } from '../runtime/memory';
+import { ToolcallManager } from '../tools/toolcallManager';
+// IMPORTANT: Import from "../tools" to trigger tool registration via decorators
 // Now using TypeScript-native decorator system
-import { SystemToolStore, FunctionCallingStore, registerAgentAsTool } from './tools';
-import { AsyncExitStack } from './utils/connections';
-import { Toolcall } from './schemas/toolCall';
-import { extractToolcallsFromStr } from './utils/toolUtil';
-import { AgentConfig, ModelConfig, ModelResponse, PostProcessor } from './types';
-import { Message as MemoryMessage } from './schemas/message';
-import { SYSTEM_TOOLS_PROMPT, OUTPUT_FORMAT_PROMPT } from './prompts/tools';
-import { logger } from './utils';
+import { SystemToolStore, FunctionCallingStore, registerAgentAsTool } from '../tools';
+import { AsyncExitStack } from '../utils/connections';
+import { Toolcall } from '../schemas/toolCall';
+import { extractToolcallsFromStr } from '../utils/toolUtil';
+import { ModelConfig, ModelResponse, PostProcessor } from '../types';
+import { Message as MemoryMessage } from '../schemas/message';
+import { SYSTEM_TOOLS_PROMPT, OUTPUT_FORMAT_PROMPT } from '../prompts/tools';
+import { logger } from '../utils';
+import { AgentConfig, ToolExecutorProtocol } from './agentConfig';
 
 /**
  * Main Agent class
@@ -37,6 +41,15 @@ export class Agent {
     private postProcessor: PostProcessor | null;
     private useFunctionCalling: boolean;
 
+    // New properties from Python 0.2.2
+    agentId: string;
+    workspaceDir: string;
+    executor: ToolExecutorProtocol | null;
+    autoShutdownExecutor: boolean;
+    private parallelExecution: boolean;
+    private observeTimeout: number;
+    private skills: string[];
+
     constructor(config: AgentConfig) {
         const {
             name,
@@ -46,19 +59,44 @@ export class Agent {
             subAgents = [],
             mcpServerNames = [],
             modelConfig,
+            udfModelName,
             verbose = false,
             useFunctionCalling = false,
             postProcessor = null,
             toolcallManagerPoolSize = 5,
+            // New parameters from Python 0.2.2
+            agentId,
+            workspaceDir = '',
+            executor = null,
+            autoShutdownExecutor = false,
+            parallelExecution = false,
+            observeTimeout = 60.0,
+            skills = [],
         } = config;
 
         this.name = name;
         this.profile = profile;
         this.verbose = verbose;
-        this.modelConfig = modelConfig || 'deepseek';
+        // Support both modelConfig (legacy) and udfModelName (new)
+        this.modelConfig = udfModelName || modelConfig || 'deepseek';
         this.subAgents = subAgents || [];
         this.postProcessor = postProcessor;
         this.useFunctionCalling = useFunctionCalling;
+
+        // New properties from Python 0.2.2
+        this.agentId = agentId || uuidv4();
+        this.workspaceDir = workspaceDir ? path.resolve(workspaceDir) : '';
+        this.executor = executor;
+        this.autoShutdownExecutor = autoShutdownExecutor;
+        this.parallelExecution = parallelExecution;
+        this.observeTimeout = observeTimeout;
+        this.skills = skills;
+
+        // Create workspace directory if specified and doesn't exist
+        if (this.workspaceDir && !fs.existsSync(this.workspaceDir)) {
+            fs.mkdirSync(this.workspaceDir, { recursive: true });
+            logger.debug(`Created workspace directory for agent ${this.name}: ${this.workspaceDir}`);
+        }
 
         // Register sub-agents as tools and merge with provided tools
         const agentToolNames = registerAgentAsTool(this.subAgents, Boolean(this.verbose));
@@ -414,6 +452,16 @@ export class Agent {
         } finally {
             // Cleanup MCP tools
             await stack.close();
+
+            // Auto shutdown executor if configured
+            if (this.autoShutdownExecutor && this.executor) {
+                try {
+                    await this.executor.shutdown({ wait: true });
+                    logger.debug(`Executor shutdown completed for agent ${this.name}`);
+                } catch (error) {
+                    logger.warn(`Error during executor shutdown: ${error}`);
+                }
+            }
         }
     }
 
@@ -474,5 +522,61 @@ export class Agent {
      */
     getSubAgents(): any[] {
         return [...this.subAgents];
+    }
+
+    /**
+     * Get agent ID
+     */
+    getAgentId(): string {
+        return this.agentId;
+    }
+
+    /**
+     * Get workspace directory
+     */
+    getWorkspaceDir(): string {
+        return this.workspaceDir;
+    }
+
+    /**
+     * Get parallel execution setting
+     */
+    getParallelExecution(): boolean {
+        return this.parallelExecution;
+    }
+
+    /**
+     * Get observe timeout setting
+     */
+    getObserveTimeout(): number {
+        return this.observeTimeout;
+    }
+
+    /**
+     * Get skills
+     */
+    getSkills(): string[] {
+        return [...this.skills];
+    }
+
+    /**
+     * Get executor
+     */
+    getExecutor(): ToolExecutorProtocol | null {
+        return this.executor;
+    }
+
+    /**
+     * Set executor
+     */
+    setExecutor(executor: ToolExecutorProtocol): void {
+        this.executor = executor;
+    }
+
+    /**
+     * Get chat history message
+     */
+    get chatHistoryMessage(): MessageHistory {
+        return this.history;
     }
 }

@@ -7,12 +7,12 @@
  * - Google Gemini
  */
 
-import { ModelConfig, ModelError } from './types';
-import { loadModelConfig } from './configs/configLoader';
+import { ModelConfig, ModelError } from '../types';
+import { loadModelConfig } from '../configs/configLoader';
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { logger, streamLogger } from './utils';
+import { logger, streamLogger } from '../utils';
 
 /**
  * Model response interface
@@ -72,17 +72,6 @@ export class Model {
                     timeout: 60000,
                 });
                 break;
-
-            // case 'anthropic':
-            //     if (this.config.baseUrl.endsWith('/v1') || this.config.baseUrl.endsWith('v1/')) {
-            //         this.config.baseUrl = this.config.baseUrl.slice(0, -3);
-            //     }
-            //     this.anthropicClient = new Anthropic({
-            //         apiKey: this.config.apiKey || process.env.ANTHROPIC_API_KEY,
-            //         baseURL: this.config.baseUrl,
-            //         timeout: 60000,
-            //     });
-            //     break;
 
             case 'gemini':
                 const apiKey = this.config.apiKey || process.env.GEMINI_API_KEY || '';
