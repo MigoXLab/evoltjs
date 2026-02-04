@@ -6,7 +6,7 @@
 
 import * as fs from 'fs';
 import { BaseEnvironment } from './base';
-import { Agent } from '../agent';
+import { Agent } from '../core/agent';
 import { WORKSPACE_DIR } from '../configs/paths';
 import { logger } from '../utils';
 

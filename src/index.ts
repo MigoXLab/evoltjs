@@ -7,8 +7,8 @@
 // IMPORTANT: Import tools first to ensure decorator registration happens before Agent export
 import './tools';
 
-export { Agent } from './agent';
-export { Model } from './model';
+export { Agent } from './core/agent';
+export { Model } from './core/model';
 export { Message, Toolcall, ToolcallState, ToolcallType } from './schemas';
 export { MessageHistory } from './memory';
 

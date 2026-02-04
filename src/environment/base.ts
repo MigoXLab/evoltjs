@@ -4,7 +4,7 @@
  * Converts Python's environment/base.py to TypeScript
  */
 
-import { Agent } from '../agent';
+import { Agent } from '../core/agent';
 import { SkillsTool } from '../tools/skills';
 import { SKILLS_DIR } from '../configs/paths';
 import { logger } from '../utils';

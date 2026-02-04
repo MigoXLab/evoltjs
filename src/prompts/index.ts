@@ -3,7 +3,6 @@
  *
  * Translated from Python evolt/prompts/
  */
-
 export { OUTPUT_FORMAT_PROMPT, TOOLS_PROMPT } from './tools';
 export {
     CRITIC_SYSTEM_PROMPT as REFLECTION_CRITIC_SYSTEM_PROMPT,
