@@ -5,6 +5,8 @@
 export { AsyncExitStack } from './connections';
 export { hasToolcall, isWriteJsonFile, convertStrToObject, extractToolcallsFromStr, executeSingleTool, executeTools } from './toolUtil';
 export { MessageCost } from './cost';
+export { deprecated, DeprecatedOptions } from './deprecated';
+export { isSupportedImageFile, readImage, areadImage, ImageContent } from './readImage';
 import loggers from './logger';
 
 export const logger = loggers.getDisableLog() ? loggers.dummyLogger : loggers.enhancedLogger;

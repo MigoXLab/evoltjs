@@ -27,6 +27,8 @@ import './designUI';
 import './reflect';
 import './skills';
 import './gitTool';
+import './imageTool';
+import './patchTool';
 
 // Re-export tool classes for external use
 export { ThinkTool } from './think';
@@ -40,3 +42,5 @@ export { WriteUIDesignDocument } from './designUI';
 export { ReflectTool } from './reflect';
 export { SkillsTool } from './skills';
 export { GitTool } from './gitTool';
+export { ImageTool } from './imageTool';
+export { PatchTool } from './patchTool';
