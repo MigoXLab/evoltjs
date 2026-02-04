@@ -56,6 +56,7 @@ export class Model {
 
         switch (provider) {
             case 'openai':
+            case 'anthropic':
                 this.openaiClient = new OpenAI({
                     apiKey: this.config.apiKey || process.env.OPENAI_API_KEY,
                     baseURL: this.config.baseUrl,
@@ -72,16 +73,16 @@ export class Model {
                 });
                 break;
 
-            case 'anthropic':
-                if (this.config.baseUrl.endsWith('/v1') || this.config.baseUrl.endsWith('v1/')) {
-                    this.config.baseUrl = this.config.baseUrl.slice(0, -3);
-                }
-                this.anthropicClient = new Anthropic({
-                    apiKey: this.config.apiKey || process.env.ANTHROPIC_API_KEY,
-                    baseURL: this.config.baseUrl,
-                    timeout: 60000,
-                });
-                break;
+            // case 'anthropic':
+            //     if (this.config.baseUrl.endsWith('/v1') || this.config.baseUrl.endsWith('v1/')) {
+            //         this.config.baseUrl = this.config.baseUrl.slice(0, -3);
+            //     }
+            //     this.anthropicClient = new Anthropic({
+            //         apiKey: this.config.apiKey || process.env.ANTHROPIC_API_KEY,
+            //         baseURL: this.config.baseUrl,
+            //         timeout: 60000,
+            //     });
+            //     break;
 
             case 'gemini':
                 const apiKey = this.config.apiKey || process.env.GEMINI_API_KEY || '';
@@ -104,9 +105,8 @@ export class Model {
             switch (provider) {
                 case 'openai':
                 case 'deepseek':
-                    return await this._callOpenAICompatible(messages, tools, useStream);
                 case 'anthropic':
-                    return await this._callAnthropic(messages, tools, useStream);
+                    return await this._callOpenAICompatible(messages, tools, useStream);
                 case 'gemini':
                     return await this._callGemini(messages, tools, useStream);
                 default:
