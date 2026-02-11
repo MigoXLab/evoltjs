@@ -130,9 +130,9 @@ export class Model {
             const params: any = {
                 model: this.config.model || 'gpt-3.5-turbo',
                 messages: messages,
-                temperature: this.config.temperature || 0.7,
-                max_tokens: this.config.maxOutputTokens || 1024,
-                top_p: this.config.topP || 0.9,
+                temperature: this.config.temperature,
+                max_tokens: this.config.maxOutputTokens || 8092,
+                top_p: this.config.topP,
                 stream: stream,
             };
 
