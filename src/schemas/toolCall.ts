@@ -6,6 +6,7 @@
 
 import { randomUUID } from 'crypto';
 import { logger } from '../utils';
+import { AssistantMessage, UserMessage, type AnyMessage } from './messageV2';
 
 /**
  * Toolcall execution state
@@ -119,6 +120,38 @@ export class Toolcall {
         }
 
         return `Invalid Toolcall: name ${this.name}, arguments ${JSON.stringify(this.input)}.`;
+    }
+
+    /**
+     * Convert tool call result to chat-style messages (assistant + user).
+     *
+     * Used when the provider doesn't support function calling — tool results
+     * are expressed as regular assistant / user messages instead.
+     */
+    toChatMessages(): AnyMessage[] {
+        // Extraction succeeded
+        if (this.isExtractedSuccess) {
+            const messages: AnyMessage[] = [
+                new AssistantMessage({ content: this.rawContentFromLlm || '' }),
+            ];
+            // Append execution result as user message if available
+            if (this.executedContent) {
+                messages.push(
+                    new UserMessage({
+                        content: `Toolcall ${this.name} executed result:\n${this.executedContent.trim()}`,
+                    }),
+                );
+            }
+            return messages;
+        }
+
+        // Extraction failed
+        return [
+            new AssistantMessage({ content: this.rawContentFromLlm || '' }),
+            new UserMessage({
+                content: `Toolcall ${this.name} failed to extract: ${this.failedExtractedReason || 'Unknown reason'}`,
+            }),
+        ];
     }
 
     /**
