@@ -1,14 +1,55 @@
 /**
  * Base orchestrator for multi-agent management
  *
- * Renamed from BaseEnvironment to BaseOrchestrator in 0.2.x
  * Converts Python's runtime/orchestrator/base.py to TypeScript
  */
 
+import * as fs from 'fs';
+import * as readline from 'readline';
 import { Agent } from '../../core/agent';
-import { SkillsTool } from '../../tools/skills';
-import { SKILLS_DIR } from '../../configs/paths';
 import { logger } from '../../utils';
+
+/**
+ * Read instruction from terminal or instruction file.
+ *
+ * - If EVOLT_INSTRUCTION_FILE env var is set and the file exists with content,
+ *   reads one line from it (alternative for integrated terminals that can't accept input).
+ * - Otherwise reads from stdin via readline.
+ */
+async function readInstructionFromTerminal(prompt: string): Promise<string> {
+    // Try reading from EVOLT_INSTRUCTION_FILE first
+    const instructionFile = (process.env.EVOLT_INSTRUCTION_FILE || '').trim();
+    if (instructionFile && fs.existsSync(instructionFile)) {
+        try {
+            const content = fs.readFileSync(instructionFile, 'utf-8');
+            const lines = content.split('\n');
+            if (lines.length > 0) {
+                const instruction = (lines[0] || '').trim();
+                if (instruction) {
+                    // Remove the first line from the file
+                    fs.writeFileSync(instructionFile, lines.slice(1).join('\n'), 'utf-8');
+                    logger.debug(`Read instruction from EVOLT_INSTRUCTION_FILE: ${instruction.substring(0, 50)}...`);
+                    return instruction;
+                }
+            }
+        } catch {
+            // Fall through to readline
+        }
+    }
+
+    // Read from stdin via readline
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    });
+
+    return new Promise<string>((resolve) => {
+        rl.question(prompt, (answer) => {
+            rl.close();
+            resolve((answer || '').trim());
+        });
+    });
+}
 
 /**
  * Instruction type enumeration
@@ -24,8 +65,10 @@ export enum InstructionType {
 /**
  * Base orchestrator for multi-agent coordination
  *
- * Renamed from BaseEnvironment in Python 0.2.x.
- * The old "Environment" name now refers to evaluation environments used by Reflexion.
+ * Args:
+ *   agents: Agent[], list of agents
+ *   alwaysWaitHumanInput: boolean, whether to always wait for human input after each agent round
+ *   maxRounds: number, maximum number of conversation rounds
  */
 export class BaseOrchestrator {
     /**
@@ -34,89 +77,44 @@ export class BaseOrchestrator {
     agents: Agent[] = [];
 
     /**
-     * Assign skills to agent with their names
+     * Whether to always wait for human input after each agent round
      */
-    agentSkills: Record<string, string[]> = {};
+    alwaysWaitHumanInput: boolean = true;
 
     /**
-     * Whether to always wait for human input
+     * Maximum number of conversation rounds
      */
-    alwaysWaitHumanInput: boolean = false;
-
-    /**
-     * Maximum number of rounds for agent execution
-     */
-    maxRounds: number = 100;
+    maxRounds: number = 1;
 
     constructor(options: {
         agents?: Agent[];
-        agentSkills?: Record<string, string[]>;
         alwaysWaitHumanInput?: boolean;
         maxRounds?: number;
     } = {}) {
         const {
             agents = [],
-            agentSkills = {},
-            alwaysWaitHumanInput = false,
-            maxRounds = 100,
+            alwaysWaitHumanInput = true,
+            maxRounds = 1,
         } = options;
 
         this.agents = agents;
-        this.agentSkills = agentSkills;
         this.alwaysWaitHumanInput = alwaysWaitHumanInput;
         this.maxRounds = maxRounds;
-        this.setAgentSkills();
-    }
 
-    /**
-     * Set agent skills after initialization
-     */
-    private setAgentSkills(): void {
-        if (this.agents.length === 0 || Object.keys(this.agentSkills).length === 0) {
-            return;
+        // Equivalent to Python model_validator: set_max_rounds
+        // If not always waiting for human input, force maxRounds to 1 for non-blocking mode
+        if (!this.alwaysWaitHumanInput) {
+            this.maxRounds = 1;
         }
 
-        const skiller = new SkillsTool(SKILLS_DIR);
-
-        // Handle "all" keyword for assigning skills to all agents
-        if ('all' in this.agentSkills) {
-            for (const agent of this.agents) {
-                this.agentSkills[agent.name] = this.agentSkills['all'];
-            }
-            delete this.agentSkills['all'];
-        }
-
-        logger.debug(`Assigning skills to agents: ${JSON.stringify(this.agentSkills)}`);
-
-        // Assign skills to specified agents
-        for (const [agentName, skillNames] of Object.entries(this.agentSkills)) {
-            for (const agent of this.agents) {
-                if (agent.name === agentName) {
-                    const skillDescriptions: string[] = [];
-
-                    // Read skill descriptions asynchronously
-                    (async () => {
-                        for (const skillName of skillNames) {
-                            try {
-                                const skillDescription = await skiller.readSkillDescription(skillName);
-                                skillDescriptions.push(skillDescription);
-                            } catch (error) {
-                                logger.warn(`Failed to read skill description for ${skillName}:`, error);
-                            }
-                        }
-
-                        const skillDescription =
-                            '\n--- <SKILLS START> ---\n' + skillDescriptions.join('\n-----\n') + '\n--- <SKILLS END> ---\n';
-
-                        agent.systemPrompt = agent.systemPrompt + skillDescription;
-                    })();
-                }
-            }
+        // Equivalent to Python model_validator: disable_agent_executor_auto_shutdown
+        for (const agent of this.agents) {
+            agent.autoShutdownExecutor = false;
         }
     }
 
     /**
-     * Check if instruction has agent name
+     * Check if instruction contains an agent name
      */
     hasAgentName(instruction: string): boolean {
         if (!instruction.includes('@')) {
@@ -135,12 +133,12 @@ export class BaseOrchestrator {
      * Post process instruction
      */
     postProcessInstruction(instruction: string, agentNames: string[]): [InstructionType, string] {
-        // Direct return instructions
-        if (['/q', 'exit', 'quit'].includes(instruction.toLowerCase()) || agentNames.length === 0) {
+        // Quit conditions
+        if ((instruction && ['/q', 'exit', 'quit'].includes(instruction.toLowerCase())) || agentNames.length === 0) {
             return [InstructionType.QUIT, instruction];
         }
 
-        // Single agent case: add @agent_name
+        // Single agent case: automatically add @agent_name
         if (agentNames.length === 1) {
             return [InstructionType.VALID, `${instruction}@${agentNames[0]}`];
         }
@@ -162,119 +160,87 @@ export class BaseOrchestrator {
      */
     async shutdownAllExecutors(options?: { wait?: boolean }): Promise<void> {
         const wait = options?.wait ?? true;
+        logger.debug('Shutting down all executors...');
         for (const agent of this.agents) {
-            // Future: when agents have executors, shut them down here
-            // await agent.executor?.shutdown({ wait });
-        }
-        logger.debug('All agent executors shutdown');
-    }
-
-    /**
-     * Run with a single goal until completion (non-interactive mode)
-     */
-    async runGoal(goal: string): Promise<void> {
-        if (this.agents.length === 0) {
-            logger.error('No agents in the orchestrator.');
-            return;
-        }
-
-        const [instructionType, processedInstruction] = this.postProcessInstruction(
-            goal,
-            this.agents.map(agent => agent.name)
-        );
-
-        if (instructionType === InstructionType.QUIT) {
-            logger.info('Invalid goal instruction.');
-            return;
-        }
-
-        if (instructionType === InstructionType.NO_AVAILABLE_AGENT_NAME) {
-            logger.warn("No available agent name in instruction. Please provide instruction with '@agent_name'.");
-            return;
-        }
-
-        logger.info('Goal:', goal);
-        logger.info('Processing goal...\n');
-
-        for (const agent of this.agents) {
-            if (instructionType === InstructionType.SEND_TO_ALL || processedInstruction.includes(`@${agent.name}`)) {
+            if (agent.executor !== null) {
                 try {
-                    const response = await agent.run(processedInstruction);
-                    logger.info(`\n> Agent ${agent.name} completed the goal.`);
-                    logger.info(`Final response: ${response}`);
+                    await agent.executor.shutdown({ wait });
                 } catch (error) {
-                    logger.error(`Error running agent ${agent.name}:`, error);
+                    logger.warn(`Error shutting down executor for agent ${agent.name}: ${error}`);
                 }
             }
         }
+        logger.debug('All executors shut down.');
     }
 
     /**
-     * Run the orchestrator (interactive mode)
+     * Run the orchestrator with the given instruction.
+     *
+     * @param instruction - Optional instruction to execute. When alwaysWaitHumanInput is true,
+     *                      this is ignored and input is read from terminal instead.
      */
     async run(instruction?: string): Promise<void> {
-        // If instruction provided, run in non-interactive mode
-        if (instruction) {
-            await this.runGoal(instruction);
-            return;
-        }
-
-        // Interactive mode
-        const readline = await import('readline');
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-        });
-
-        const question = (prompt: string): Promise<string> => {
-            return new Promise(resolve => {
-                rl.question(prompt, resolve);
-            });
-        };
-
-        try {
-            while (true) {
-                try {
-                    // Get instruction from user
-                    let userInstruction: string;
-                    if (this.agents.length === 0) {
-                        logger.error('No agents in the orchestrator.');
-                        break;
-                    } else if (this.agents.length === 1) {
-                        userInstruction = await question("Enter your instruction (or '/q' to quit): ");
-                    } else {
-                        const agentNames = this.agents.map(agent => agent.name).join(', ');
-                        userInstruction = await question(
-                            `Enter your instruction with '@agent_name' (or '/q' to quit), available agents: ${agentNames}: `
-                        );
-                    }
-
-                    const [instructionType, processedInstruction] = this.postProcessInstruction(
-                        userInstruction,
-                        this.agents.map(agent => agent.name)
-                    );
-
-                    if (instructionType === InstructionType.QUIT) {
-                        logger.info('Quitting...');
-                        break;
-                    } else if (instructionType === InstructionType.NO_AVAILABLE_AGENT_NAME) {
-                        logger.warn("No available agent name in instruction. Please enter your instruction with '@agent_name'.");
-                        continue;
-                    }
-
-                    logger.info('Processing your request...');
-                    for (const agent of this.agents) {
-                        if (instructionType === InstructionType.SEND_TO_ALL || processedInstruction.includes(`@${agent.name}`)) {
-                            const response = await agent.run(processedInstruction);
-                            logger.info(`Agent ${agent.name} response:`, response);
-                        }
-                    }
-                } catch (error) {
-                    logger.error('Error processing instruction:', error);
+        while (this.maxRounds > 0) {
+            try {
+                // Check for agents
+                if (this.agents.length === 0) {
+                    logger.error('No agents in the orchestrator.');
+                    await this.shutdownAllExecutors({ wait: true });
+                    break;
                 }
+
+                // Get instruction from user if always waiting for human input
+                if (this.alwaysWaitHumanInput) {
+                    const agentNames = this.agents.map(agent => agent.name).join(', ');
+                    const prompt = `Enter your instruction with '@agent_name' (or '/q' to quit), available agents: ${agentNames}: `;
+                    instruction = await readInstructionFromTerminal(prompt);
+                }
+
+                let [instructionType, processedInstruction] = this.postProcessInstruction(
+                    instruction || '',
+                    this.agents.map(agent => agent.name),
+                );
+
+                logger.info('Processing your request...');
+                for (const agent of this.agents) {
+                    if (
+                        instructionType === InstructionType.SEND_TO_ALL ||
+                        processedInstruction.includes(`@${agent.name}`)
+                    ) {
+                        const response = await agent.run(processedInstruction);
+                        logger.info(`Agent ${agent.name} response: ${response}`);
+                    }
+                }
+
+                // Decrement rounds
+                this.maxRounds -= 1;
+
+                // If rounds exhausted, force quit
+                if (this.maxRounds <= 0) {
+                    instructionType = InstructionType.QUIT;
+                }
+
+                // Check if should quit or continue
+                if (instructionType === InstructionType.QUIT) {
+                    logger.info('Quitting...');
+                    // Don't wait for tasks on user-initiated quit for fast exit
+                    await this.shutdownAllExecutors({ wait: false });
+                    break;
+                } else if (instructionType === InstructionType.NO_AVAILABLE_AGENT_NAME) {
+                    logger.warn(
+                        "No available agent name in instruction. Please enter your instruction with '@agent_name'.",
+                    );
+                    continue;
+                }
+            } catch (error) {
+                // Handle interruption (e.g. SIGINT caught as error)
+                if (error instanceof Error && error.message.includes('interrupted')) {
+                    logger.warn('User interrupted the execution.');
+                    continue;
+                }
+                logger.error(`Error during execution: ${error}`);
+                continue;
             }
-        } finally {
-            rl.close();
         }
     }
 }

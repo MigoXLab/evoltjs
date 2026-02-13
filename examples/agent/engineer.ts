@@ -1,13 +1,13 @@
 /**
- * Engineer - Coding environment demonstration
+ * Engineer - Coding orchestrator demonstration
  *
  * Converts Python's engineer.py to TypeScript
  */
 
-import { Agent } from '../../src/agent';
+import { Agent } from '../../src/core/agent';
 import { deepseekModelConfig } from './modelConfig';
 import { logger } from '../../src/utils';
-import { CodingEnvironment } from '../../src/environment/coding';
+import { CodingOrchestrator } from '../../src/runtime/orchestrator/coding';
 
 const instructions = `
 <instructions>
@@ -26,28 +26,35 @@ const agent = new Agent({
     modelConfig: deepseekModelConfig,
 });
 
-// Create coding environment
-const environment = new CodingEnvironment([agent], {}, './workspace/engineer');
+// Create coding orchestrator (non-interactive mode for goal execution)
+const orchestrator = new CodingOrchestrator({
+    agents: [agent],
+    alwaysWaitHumanInput: false,
+});
 
 /**
- * Run the engineer environment with a goal (non-interactive)
+ * Run the orchestrator with a goal (non-interactive)
  */
 async function runWithGoal(goal: string): Promise<void> {
     try {
-        await environment.runGoal(goal);
+        await orchestrator.run(goal);
     } catch (error) {
-        logger.error('Error running engineer environment:', error);
+        logger.error('Error running engineer orchestrator:', error);
     }
 }
 
 /**
- * Run the engineer environment in interactive mode
+ * Run the orchestrator in interactive mode
  */
 async function run(): Promise<void> {
     try {
-        await environment.run();
+        const interactiveOrchestrator = new CodingOrchestrator({
+            agents: [agent],
+            alwaysWaitHumanInput: true,
+        });
+        await interactiveOrchestrator.run();
     } catch (error) {
-        logger.error('Error running engineer environment:', error);
+        logger.error('Error running engineer orchestrator:', error);
     }
 }
 
@@ -55,7 +62,7 @@ async function run(): Promise<void> {
  * Main function
  */
 async function main(): Promise<void> {
-    logger.info('Starting engineer environment...');
+    logger.info('Starting engineer orchestrator...');
 
     const goal = 'Goal: 为图片OCR网页前端项目，生成完整的 React 代码，包括上传、识别模拟、结果展示与下载功能.';
     logger.info(goal);
@@ -69,6 +76,6 @@ if (require.main === module) {
     main().catch(logger.error);
 }
 
-export { run, runWithGoal, agent, environment };
+export { run, runWithGoal, agent, orchestrator };
 
 // 脚本执行方式：npx tsx examples/agent/engineer.ts
