@@ -1,7 +1,7 @@
 /**
- * Observation format templates
+ * Observation-related prompts
  *
- * Converts Python's prompts/observation.py to TypeScript
+ * Translated from Python evolt/prompts/observation.py
  */
 
-export const OBSERVATION_FORMAT_PROMPT = `Observation from tool {toolcallDescription} execution: {observation}`;
+export const OBSERVATION_FORMAT_PROMPT = `Observation from tool {toolcall_description} execution: {observation}`;
