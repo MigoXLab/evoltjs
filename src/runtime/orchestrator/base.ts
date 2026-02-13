@@ -116,7 +116,7 @@ export class BaseOrchestrator {
     /**
      * Check if instruction contains an agent name
      */
-    hasAgentName(instruction: string): boolean {
+    private hasAgentName(instruction: string): boolean {
         if (!instruction.includes('@')) {
             return false;
         }
@@ -132,7 +132,9 @@ export class BaseOrchestrator {
     /**
      * Post process instruction
      */
-    postProcessInstruction(instruction: string, agentNames: string[]): [InstructionType, string] {
+    private postProcessInstruction(instruction: string): [InstructionType, string] {
+        const agentNames = this.agents.map(agent => agent.name);
+
         // Quit conditions
         if ((instruction && ['/q', 'exit', 'quit'].includes(instruction.toLowerCase())) || agentNames.length === 0) {
             return [InstructionType.QUIT, instruction];
@@ -158,7 +160,7 @@ export class BaseOrchestrator {
     /**
      * Shutdown all agent executors
      */
-    async shutdownAllExecutors(options?: { wait?: boolean }): Promise<void> {
+    private async shutdownAllExecutors(options?: { wait?: boolean }): Promise<void> {
         const wait = options?.wait ?? true;
         logger.debug('Shutting down all executors...');
         for (const agent of this.agents) {
@@ -186,7 +188,7 @@ export class BaseOrchestrator {
                 if (this.agents.length === 0) {
                     logger.error('No agents in the orchestrator.');
                     await this.shutdownAllExecutors({ wait: true });
-                    break;
+                    return;
                 }
 
                 // Get instruction from user if always waiting for human input
@@ -196,11 +198,23 @@ export class BaseOrchestrator {
                     instruction = await readInstructionFromTerminal(prompt);
                 }
 
-                let [instructionType, processedInstruction] = this.postProcessInstruction(
-                    instruction || '',
-                    this.agents.map(agent => agent.name),
-                );
+                const [instructionType, processedInstruction] = this.postProcessInstruction(instruction || '');
 
+                // Handle early exits before running agents
+                if (instructionType === InstructionType.QUIT) {
+                    logger.info('Quitting...');
+                    await this.shutdownAllExecutors({ wait: false });
+                    return;
+                }
+
+                if (instructionType === InstructionType.NO_AVAILABLE_AGENT_NAME) {
+                    logger.warn(
+                        "No available agent name in instruction. Please enter your instruction with '@agent_name'.",
+                    );
+                    continue;
+                }
+
+                // Run matching agents
                 logger.info('Processing your request...');
                 for (const agent of this.agents) {
                     if (
@@ -212,25 +226,12 @@ export class BaseOrchestrator {
                     }
                 }
 
-                // Decrement rounds
+                // Decrement rounds only after actual agent execution
                 this.maxRounds -= 1;
-
-                // If rounds exhausted, force quit
                 if (this.maxRounds <= 0) {
-                    instructionType = InstructionType.QUIT;
-                }
-
-                // Check if should quit or continue
-                if (instructionType === InstructionType.QUIT) {
-                    logger.info('Quitting...');
-                    // Don't wait for tasks on user-initiated quit for fast exit
+                    logger.info('Max rounds reached, quitting...');
                     await this.shutdownAllExecutors({ wait: false });
-                    break;
-                } else if (instructionType === InstructionType.NO_AVAILABLE_AGENT_NAME) {
-                    logger.warn(
-                        "No available agent name in instruction. Please enter your instruction with '@agent_name'.",
-                    );
-                    continue;
+                    return;
                 }
             } catch (error) {
                 // Handle interruption (e.g. SIGINT caught as error)
