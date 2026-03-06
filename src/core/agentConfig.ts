@@ -5,22 +5,8 @@
  * Separates configuration from business logic.
  */
 
+import { ToolExecutorProtocol } from '@/runtime/executors';
 import { PostProcessor } from '../types';
-
-/**
- * Tool Executor Protocol interface
- * Will be fully defined in runtime/executors
- */
-export interface ToolExecutorProtocol {
-    start(): Promise<void>;
-    shutdown(options?: { wait?: boolean }): Promise<void>;
-    submit(toolcall: any): Promise<void>;
-    submitMany(toolcalls: Iterable<any>, options?: { parallel?: boolean }): Promise<void>;
-    observe(options?: { wait?: boolean; timeout?: number; maxItems?: number }): Promise<any[]>;
-    waitAll(): Promise<void>;
-    status(): Record<string, any>;
-    clear(): void;
-}
 
 /**
  * Configuration interface for Agent

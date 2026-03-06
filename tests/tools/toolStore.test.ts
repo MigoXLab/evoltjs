@@ -7,8 +7,8 @@ import { SystemToolStore, FunctionCallingStore } from '../../src/tools/toolStore
 describe('toolStore', () => {
   beforeEach(() => {
     // Reset tool stores before each test
-    (SystemToolStore as any).tools = {};
-    (FunctionCallingStore as any).tools = {};
+    (SystemToolStore as any)._getInternalToolsMap().clear();
+    (FunctionCallingStore as any)._getInternalToolsMap().clear();
   });
 
   describe('SystemToolStore', () => {
@@ -122,11 +122,8 @@ describe('toolStore', () => {
 
     it('should handle MCP tools (placeholder)', async () => {
       await expect(
-        FunctionCallingStore.addMcpTools?.('test-agent', 'test-server', {})
-      ).resolves.not.toThrow();
-
-      const schemas = FunctionCallingStore.getMcpToolsSchemas?.('test-agent', 'test-server', 'openai');
-      expect(schemas).toEqual([]);
+        FunctionCallingStore.addMcpTools?.('test-agent', ['test-server'], 'openai')
+      ).rejects.toThrow();
     });
   });
 });

@@ -25,8 +25,7 @@ describe('ToolcallManager Context', () => {
     },
     listTools: () => ['MockTool.checkManager'],
     addTool: () => {},
-    addMcpTools: async () => {},
-    getMcpToolsSchemas: () => [],
+    addMcpTools: async () => { return { schemas: [], cleanup: async () => {} } },
     toDict: () => [],
     contains: (name: string) => name === 'MockTool.checkManager',
     getItem: (name: string) => {

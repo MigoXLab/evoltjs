@@ -9,8 +9,22 @@ import './tools';
 
 export { Agent } from './core/agent';
 export { Model } from './core/model';
+export { AgentConfig } from './core/agentConfig';
+
+// Schema exports
 export { Message, Toolcall, ToolcallState, ToolcallType } from './schemas';
+
+// Runtime: Memory exports (moved from memory/ to runtime/memory/)
 export { MessageHistory } from './runtime/memory';
+
+// Runtime: Executors exports
+export {
+    LocalToolExecutor,
+    getCurrentExecutor,
+    setCurrentExecutor,
+    ToolExecutorProtocol,
+    ExecutorStatus,
+} from './runtime/executors';
 
 // Hooks exports
 export { PostProcessor } from './hooks';

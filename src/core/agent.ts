@@ -9,140 +9,118 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Model } from './model';
 import { MessageHistory } from '../runtime/memory';
-import { ToolcallManager } from '../tools/toolcallManager';
 // IMPORTANT: Import from "../tools" to trigger tool registration via decorators
 // Now using TypeScript-native decorator system
 import { SystemToolStore, FunctionCallingStore, registerAgentAsTool } from '../tools';
-import { AsyncExitStack } from '../utils/connections';
 import { Toolcall } from '../schemas/toolCall';
 import { extractToolcallsFromStr } from '../utils/toolUtil';
-import { ModelConfig, ModelResponse, PostProcessor } from '../types';
+import { ModelConfig, ModelResponse, PostProcessor, ToolSchema } from '../types';
 import { Message as MemoryMessage } from '../schemas/message';
 import { TOOLS_PROMPT, OUTPUT_FORMAT_PROMPT } from '../prompts/tools';
 import { logger } from '../utils';
-import { AgentConfig, ToolExecutorProtocol } from './agentConfig';
+import { AgentConfig } from './agentConfig';
+import { LocalToolExecutor, createGeneratedToolcall, GeneratedToolcallProtocol, ToolExecutorProtocol } from '../runtime/executors';
+import { SKILLS_DIR } from '../configs/paths';
+import { areadImage } from '../utils/readImage';
+import { ChatCompletionFunctionTool } from 'openai/resources/index';
 
 /**
  * Main Agent class
  */
 export class Agent {
-    // ---- Basic configuration ----
     name: string;
     private profile: string;
     private system: string;
-
-    // ---- Workspace / skill / rule / spec ----
-    private skills: string[];
-
-    // ---- Tool configuration ----
     private tools: string[];
     private functionCallingTools: any[] = [];
-    private subAgents: any[] = [];
+    private mcpTools: any[] = [];
     private mcpServerNames: string[];
+    private useMcp: boolean;
+    private modelConfig: string | ModelConfig;
+    private verbose: boolean | number;
+    private model: Model;
+    private history: MessageHistory;
+    private subAgents: any[] = [];
+    private postProcessor: PostProcessor | null;
     private useFunctionCalling: boolean;
 
-    // ---- Model configuration ----
-    private modelConfig: string | ModelConfig;
-    private model: Model;
-
-    // ---- Runtime configuration ----
-    private verbose: boolean | number;
+    // New properties from Python 0.2.2
+    agentId: string;
+    workspaceDir: string;
+    executor: ToolExecutorProtocol | null;
+    autoShutdownExecutor: boolean;
     private parallelExecution: boolean;
     private observeTimeout: number;
-    workspaceDir: string;
-    autoShutdownExecutor: boolean;
-    private toolcallManagerPoolSize: number;
-    private history: MessageHistory;
-
-    // ---- Optional components ----
-    private postProcessor: PostProcessor | null;
-    executor: ToolExecutorProtocol | null;
-    agentId: string;
+    private skills: string[];
 
     constructor(config: AgentConfig) {
         const {
-            // Basic configuration
             name,
             profile,
             system,
-            // Workspace / skill / rule / spec
-            skills = [],
-            // Tool configuration
             tools = [],
             subAgents = [],
             mcpServerNames = [],
-            useFunctionCalling = false,
-            // Model configuration
-            udfModelName,
             modelConfig,
-            // Runtime configuration
+            udfModelName,
             verbose = false,
+            useFunctionCalling = false,
+            postProcessor = null,
+            // New parameters from Python 0.2.2
+            agentId,
+            workspaceDir = '',
+            executor,
+            autoShutdownExecutor = false,
             parallelExecution = false,
             observeTimeout = 60.0,
-            workspaceDir = '',
-            autoShutdownExecutor = false,
-            toolcallManagerPoolSize = 5,
-            // Optional components
-            postProcessor = null,
-            executor = null,
-            agentId,
+            skills = [],
         } = config;
 
-        if (observeTimeout <= 0) {
-            throw new Error('observeTimeout must be greater than 0');
-        }
-
-        // Basic configuration
+        // Identity and presentation
         this.name = name;
         this.profile = profile;
-
-        // Workspace / skill / rule / spec
-        this.skills = skills;
-
-        // Tool configuration
-        this.subAgents = subAgents || [];
-        this.useFunctionCalling = useFunctionCalling;
-
-        // Model configuration (support both legacy modelConfig and new udfModelName)
-        this.modelConfig = udfModelName || modelConfig || 'deepseek';
-
-        // Runtime configuration
         this.verbose = verbose;
-        this.parallelExecution = parallelExecution;
-        this.observeTimeout = observeTimeout;
-        this.workspaceDir = workspaceDir ? path.resolve(workspaceDir) : '';
-        this.autoShutdownExecutor = autoShutdownExecutor;
-
-        // Optional components
-        this.postProcessor = postProcessor;
-        this.executor = executor;
         this.agentId = agentId || uuidv4();
 
-        // Create workspace directory if specified and doesn't exist
+        // Model
+        // Support both modelConfig (legacy) and udfModelName (new)
+        this.modelConfig = udfModelName || modelConfig || 'deepseek';
+        this.model = new Model(this.modelConfig);
+
+        // Tools and orchestration behaviors
+        this.subAgents = subAgents || [];
+        this.useFunctionCalling = useFunctionCalling;
+        this.mcpServerNames = mcpServerNames;
+        this.useMcp = this.mcpServerNames.length > 0;
+        const agentToolNames = registerAgentAsTool(this.subAgents, Boolean(this.verbose));
+        this.tools = [...tools, ...agentToolNames];
+        // Build function calling tools regardless of flag, then enable by flag at runtime
+        this.functionCallingTools = this.setFunctionCallingTools(this.tools);
+
+        // Execution and runtime controls
+        this.postProcessor = postProcessor;
+        this.executor = executor || new LocalToolExecutor(5, [SystemToolStore as any, FunctionCallingStore as any]);
+        this.autoShutdownExecutor = autoShutdownExecutor;
+        this.parallelExecution = parallelExecution;
+        this.observeTimeout = observeTimeout;
+
+        // Workspace and prompt context
+        this.workspaceDir = workspaceDir ? path.resolve(workspaceDir) : '';
         if (this.workspaceDir && !fs.existsSync(this.workspaceDir)) {
             fs.mkdirSync(this.workspaceDir, { recursive: true });
             logger.debug(`Created workspace directory for agent ${this.name}: ${this.workspaceDir}`);
         }
-
-        // Register sub-agents as tools and merge with provided tools
-        const agentToolNames = registerAgentAsTool(this.subAgents, Boolean(this.verbose));
-        this.tools = [...tools, ...agentToolNames];
-        this.mcpServerNames = mcpServerNames;
-
-        // Set system prompt with tools descriptions (system tools only)
         const systemPrompt = system || profile || '';
-        this.system = this.tools.length > 0 ? this.setSystem(systemPrompt, this.tools) : systemPrompt;
+        this.skills = skills;
+        this.system = this.buildSystemPrompt(systemPrompt, this.tools, this.workspaceDir || undefined, this.skills);
 
-        // Initialize model
-        this.model = new Model(this.modelConfig);
-
-        // Initialize message history
+        // Conversation state
         const modelNameForHistory = typeof this.modelConfig === 'string' ? this.modelConfig : this.modelConfig.model || 'deepseek';
         this.history = new MessageHistory(modelNameForHistory, this.system, this.model.getConfig().contextWindowTokens);
 
-        // Set up function calling tools if enabled
-        if (this.useFunctionCalling) {
-            this.functionCallingTools = this.setFunctionCallingTools(this.tools);
+        // Inject workspace hint into chat history (same as Python)
+        if (this.workspaceDir) {
+            this.history.addMessage('user', `Your workspace directory is: ${this.workspaceDir}`);
         }
 
         // Debug: Print system prompt when verbose is enabled
@@ -156,7 +134,6 @@ export class Agent {
                 logger.info('');
             }
         }
-        this.toolcallManagerPoolSize = toolcallManagerPoolSize;
     }
 
     /**
@@ -180,26 +157,62 @@ export class Agent {
      * Set the system prompt with system tools descriptions
      * @private
      */
-    private setSystem(system: string, systemTools: string[]): string {
+    private buildSystemPrompt(
+        system: string,
+        tools: string[],
+        workspaceDir?: string,
+        skills?: string[]
+    ): string {
         let toolDescriptions = '';
 
-        for (const tool of systemTools) {
-            if (SystemToolStore.hasTool(tool)) {
+        for (const tool of tools) {
+            if (!SystemToolStore.hasTool(tool)) {
+                logger.warn(`Tool ${tool} not registered in SystemToolStore.`);
+            } else {
                 const toolDesc = SystemToolStore.getTool(tool);
-                toolDescriptions += (toolDesc?.desc || '') + '\n\n';
+                toolDescriptions += '\n' + (toolDesc?.desc || '');
             }
         }
 
-        if (systemTools.length > 0) {
-            const availableSystemTools = systemTools.map(t => `- ${t}`).join('\n');
-
-            return (
+        if (tools.length > 0) {
+            system =
                 system +
                 '\n' +
-                TOOLS_PROMPT.replace('{available_tools}', availableSystemTools)
+                TOOLS_PROMPT.replace('{available_tools}', tools.map(t => `- ${t}`).join('\n'))
                     .replace('{desc_of_tools}', toolDescriptions)
-                    .replace('{output_format}', OUTPUT_FORMAT_PROMPT)
-            );
+                    .replace('{output_format}', OUTPUT_FORMAT_PROMPT);
+        }
+
+        if (typeof this.verbose === 'number' && this.verbose > 1) {
+            logger.debug(`System prompt: ${system}`);
+        }
+
+        if (skills && skills.length > 0) {
+            const skillDescriptions: string[] = [];
+            for (const skillName of skills) {
+                const skillPath = path.join(SKILLS_DIR, skillName, 'SKILL.md');
+                try {
+                    if (!fs.existsSync(skillPath)) {
+                        logger.warn(`Skill description file not found: ${skillPath}`);
+                        continue;
+                    }
+                    const skillDescription = fs.readFileSync(skillPath, 'utf-8');
+                    skillDescriptions.push(
+                        `<${skillName}.SkillDescription>${skillDescription}</${skillName}.SkillDescription>`
+                    );
+                } catch (error) {
+                    logger.warn(`Failed to load skill ${skillName}: ${error}`);
+                }
+            }
+            if (skillDescriptions.length > 0) {
+                system += `\n--- <SKILLS START> ---\n${skillDescriptions.join('\n-----\n')}\n--- <SKILLS END> ---\n`;
+            }
+        }
+
+        if (workspaceDir) {
+            const absWorkspace = path.resolve(workspaceDir);
+            system += `\n\nYour workspace directory is: ${absWorkspace}`;
+            system += `\n\n**Note**: your any output files must be saved in ${absWorkspace}`;
         }
 
         return system;
@@ -210,7 +223,7 @@ export class Agent {
      * @private
      */
     private setFunctionCallingTools(tools: string[]): any[] {
-        const openaiToolCalls: any[] = [];
+        const openaiToolCalls: ChatCompletionFunctionTool[] = [];
 
         for (let tool of tools) {
             tool = tool.replace('.', '-'); // OpenAI format
@@ -232,14 +245,18 @@ export class Agent {
      * Agent loop - processes user input and handles tool calls
      * @private
      */
-    private async _agentLoop(instruction: string, images?: string | string[]): Promise<string> {
-        // Create user message
-        const instructionMsg = MemoryMessage.fromUserMsg(instruction, images);
-        this.history.addMessage(instructionMsg);
+    private toGeneratedToolcall(toolcall: Toolcall): GeneratedToolcallProtocol {
+        return createGeneratedToolcall({
+            toolName: toolcall.name,
+            toolArguments: toolcall.input || {},
+            toolCallId: toolcall.toolCallId,
+            source: toolcall.type === 'user' ? 'function_call' : 'chat',
+            rawContentFromLlm: toolcall.rawContentFromLlm,
+        });
+    }
 
-        if (this.verbose) {
-            logger.info(`\n[${this.name}] Received: ${instruction}`);
-        }
+    private async _agentLoop(): Promise<string> {
+        await this.executor?.start();
 
         while (true) {
             // Truncate history to fit context window (now preserves tool call chains)
@@ -251,10 +268,14 @@ export class Agent {
                 );
             }
 
+            const functionTools: ToolSchema[] = [
+                ...(this.useFunctionCalling ? this.functionCallingTools : []),
+                ...(this.useMcp ? this.mcpTools : []),
+            ];
             // Get response from model
             const response: ModelResponse[] = await this.model.achat(
                 await this.history.formatForApi(),
-                this.useFunctionCalling ? this.functionCallingTools : undefined
+                functionTools.length > 0 ? functionTools : undefined
             );
 
             // Extract system toolcall messages
@@ -295,9 +316,6 @@ export class Agent {
             }
 
             logger.debug(`History usage: ${this.history.formattedContextUsage}`);
-
-            // Create toolcall manager
-            const toolcallManager = new ToolcallManager(this.toolcallManagerPoolSize, [SystemToolStore, FunctionCallingStore]);
 
             // Collect and extract all tool calls
             const allToolCalls: Toolcall[] = [];
@@ -387,25 +405,40 @@ export class Agent {
             }
 
             if (allToolCalls.length > 0) {
-                toolcallManager.addToolcall(allToolCalls);
-                const obs = await toolcallManager.observe(true, 60.0);
+                const generatedToolcalls = allToolCalls.map(tc => this.toGeneratedToolcall(tc));
 
-                // Handle array of observations (which may include tool messages)
-                if (Array.isArray(obs)) {
-                    for (const item of obs) {
-                        if (typeof item === 'object') {
-                            // Direct message object (e.g. tool response)
-                            this.history.addMessage(item);
-                        } else if (typeof item === 'string') {
-                            this.history.addMessage('user', item);
-                        }
+                await this.executor?.submitMany(generatedToolcalls);
+                const observedToolcalls = await this.executor?.observe({ wait: true, timeout: this.observeTimeout });
+
+                for (const obs of observedToolcalls || []) {
+                    const metadata = obs.metadata;
+                    let executedContent = '';
+                    if (obs.result instanceof MemoryMessage) {
+                        executedContent = obs.result.content;
+                    } else if (typeof obs.result === 'string') {
+                        executedContent = obs.result;
+                    } else {
+                        executedContent = String(obs.result);
                     }
-                } else if (typeof obs === 'string') {
-                    this.history.addMessage('user', obs);
-                } else if (typeof obs === 'object') {
-                    this.history.addMessage(obs as any);
-                } else {
-                    logger.warn(`Unknown observation type: ${typeof obs}`);
+
+                    const tc = new Toolcall({
+                        name: metadata.toolName,
+                        input: metadata.toolArguments,
+                        toolCallId: metadata.toolCallId,
+                        type: metadata.source === 'function_call' ? 'user' : 'system',
+                        isExtractedSuccess: metadata.isSuccess,
+                        failedExtractedReason: metadata.failedReason,
+                        rawContentFromLlm: metadata.rawContentFromLlm,
+                        executedState: obs.isSuccess ? 'success' : 'failed',
+                        executedContent,
+                    });
+
+                    const executedResult = tc.executedResult();
+                    if (typeof executedResult === 'string') {
+                        this.history.addMessage('user', executedResult);
+                    } else {
+                        this.history.addMessage(executedResult as any);
+                    }
                 }
             } else {
                 // No tool calls - extract text from system responses and strip TaskCompletion tags
@@ -427,33 +460,50 @@ export class Agent {
         }
     }
 
+    private async _prepareInput(
+        instruction: string,
+        images?: string | string[]
+    ): Promise<void> {
+        const imagesList = images ? (Array.isArray(images) ? images : [images]) : [];
+        const imageContents = await Promise.all(imagesList.map(img => areadImage(img)));
+        const instructionMsg = new MemoryMessage('user', instruction || '');
+        instructionMsg.imagesContent = imageContents;
+        this.history.addMessage(instructionMsg);
+        if (this.verbose) {
+            logger.info(`\n[${this.name}] Received: ${instruction}`);
+        }
+    }
+
+    private async _addMcpTools(): Promise<() => Promise<void>> {
+        this.mcpTools = [];
+        if (this.mcpServerNames.length === 0 || !FunctionCallingStore.addMcpTools) {
+            return async () => { };
+        }
+
+        const { schemas, cleanup } = await FunctionCallingStore.addMcpTools(this.name, this.mcpServerNames, 'openai');
+        this.mcpTools.push(...schemas);
+
+        if (this.verbose && this.mcpTools.length > 0) {
+            logger.info(`[${this.name}] Total loaded MCP tools: ${this.mcpTools.length}.`);
+            if (typeof this.verbose === 'number' && this.verbose > 1) {
+                logger.info(`[${this.name}] MCP tools sample: ${JSON.stringify(this.mcpTools).substring(0, 200)} ...`);
+            }
+        }
+        return cleanup;
+    }
+
     /**
      * Run the agent with given instruction
      */
-    async run(instruction: string, images?: string | string[]): Promise<string | any> {
-        // AsyncExitStack for MCP tools management
-        const stack = new AsyncExitStack();
+    async run(instruction: string = '', images?: string | string[]): Promise<string | any> {
+        let cleanupMcpConnections: () => Promise<void> = async () => { };
 
         try {
             // Add MCP tools if configured
-            for (const serverName of this.mcpServerNames) {
-                await FunctionCallingStore.addMcpTools?.(this.name, serverName, stack);
-                const mcpTools = FunctionCallingStore.getMcpToolsSchemas?.(this.name, serverName, 'openai') || [];
+            cleanupMcpConnections = await this._addMcpTools();
 
-                if (this.verbose) {
-                    logger.info(`[${this.name}] Loaded MCP tools from ${serverName}: ${mcpTools.length} tools found.`);
-                    if (typeof this.verbose === 'number' && this.verbose > 1) {
-                        logger.info(`[${this.name}] MCP tools sample: ${JSON.stringify(mcpTools).substring(0, 200)} ...`);
-                    }
-                }
-
-                if (this.useFunctionCalling) {
-                    this.functionCallingTools.push(...mcpTools);
-                }
-            }
-
-            // Run agent loop (now returns string)
-            const responseText = await this._agentLoop(instruction, images);
+            await this._prepareInput(instruction, images);
+            const responseText = await this._agentLoop();
 
             // Apply post_processor if provided
             if (this.postProcessor) {
@@ -468,16 +518,13 @@ export class Agent {
             // Return raw string response
             return responseText;
         } catch (error) {
-            logger.error(`Agent ${this.name} execution error:`);
-            logger.error(error);
-            if (error instanceof Error) {
-                logger.error(`Error message: ${error.message}`);
-                logger.error(`Error stack: ${error.stack}`);
-            }
-            throw error;
+            const errorText = error instanceof Error ? `${error.message}\n${error.stack || ''}` : String(error);
+            const errorLog = `Agent ${this.name} run error: ${errorText}`;
+            logger.error(errorLog);
+            return errorLog;
         } finally {
             // Cleanup MCP tools
-            await stack.close();
+            await cleanupMcpConnections();
 
             // Auto shutdown executor if configured
             if (this.autoShutdownExecutor && this.executor) {

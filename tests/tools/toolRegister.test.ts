@@ -8,8 +8,8 @@ import { SystemToolStore, FunctionCallingStore } from '../../src/tools/toolStore
 describe('toolRegister', () => {
   beforeEach(() => {
     // Reset tool stores before each test
-    (SystemToolStore).tools = {};
-    (FunctionCallingStore).tools = {};
+    (SystemToolStore as any)._getInternalToolsMap().clear();
+    (FunctionCallingStore as any)._getInternalToolsMap().clear();
   });
 
   describe('@tools unified decorator', () => {
@@ -33,22 +33,22 @@ describe('toolRegister', () => {
       // Check SystemToolStore registration (ClassName.methodName format)
       const systemTool = (SystemToolStore).getTool('TestTool.testMethod');
       expect(systemTool).toBeDefined();
-      expect(systemTool.desc).toContain('Test method description');
-      expect(systemTool.argNames).toEqual(['param1', 'param2']);
+      expect(systemTool?.desc).toContain('Test method description');
+      expect(systemTool?.argNames).toEqual(['param1', 'param2']);
 
       // Check FunctionCallingStore registration (ClassName-methodName format)
       const userTool = (FunctionCallingStore).getTool('TestTool-testMethod');
       expect(userTool).toBeDefined();
-      expect(userTool.desc).toContain('Test method description');
-      expect(userTool.argNames).toEqual(['param1', 'param2']);
-      expect(userTool.inputSchema).toBeDefined();
+      expect(userTool?.desc).toContain('Test method description');
+      expect(userTool?.argNames).toEqual(['param1', 'param2']);
+      expect(userTool?.inputSchema).toBeDefined();
 
       // Test execution from system store
-      const result = await systemTool.execute('hello', 42);
+      const result = await systemTool?.execute('hello', 42);
       expect(result).toBe('Result: hello 42');
 
       // Test execution from user store
-      const result2 = await userTool.execute('world', 99);
+      const result2 = await userTool?.execute('world', 99);
       expect(result2).toBe('Result: world 99');
     });
 
@@ -80,8 +80,8 @@ describe('toolRegister', () => {
       expect(tool1).toBeDefined();
       expect(tool2).toBeDefined();
 
-      expect(await tool1.execute('test')).toBe('M1: test');
-      expect(await tool2.execute(5)).toBe(10);
+      expect(await tool1?.execute('test')).toBe('M1: test');
+      expect(await tool2?.execute(5)).toBe(10);
     });
 
     it('should throw error for missing tool method', () => {
@@ -113,8 +113,8 @@ describe('toolRegister', () => {
       expect(result).toEqual(['Agent.TestAgent']);
       const tool = (SystemToolStore).getTool('Agent.TestAgent');
       expect(tool).toBeDefined();
-      expect(tool.desc).toContain('TestAgent');
-      expect(tool.desc).toContain('A test agent for testing');
+      expect(tool?.desc).toContain('TestAgent');
+      expect(tool?.desc).toContain('A test agent for testing');
     });
 
     it('should register multiple agents', () => {
@@ -139,10 +139,10 @@ describe('toolRegister', () => {
 
       registerAgentAsTool(mockAgent);
       const tool = (SystemToolStore).getTool('Agent.StringAgent');
-      const result = await tool.execute('Test instruction');
+      const result = await tool?.execute('Test instruction');
 
       expect(result).toBe('String response');
-      expect(mockAgent.run).toHaveBeenCalledWith('Test instruction');
+      expect(mockAgent.run).toHaveBeenCalledWith('Test instruction', undefined);
     });
 
     it('should handle agent.run returning object (from post_processor)', async () => {
@@ -154,7 +154,7 @@ describe('toolRegister', () => {
 
       registerAgentAsTool(mockAgent);
       const tool = (SystemToolStore).getTool('Agent.ObjectAgent');
-      const result = await tool.execute('Test instruction');
+      const result = await tool?.execute('Test instruction');
 
       expect(result).toBe('{"data":"value","count":42}');
     });
@@ -168,7 +168,7 @@ describe('toolRegister', () => {
 
       registerAgentAsTool(mockAgent);
       const tool = (SystemToolStore).getTool('Agent.ErrorAgent');
-      const result = await tool.execute('Test instruction');
+      const result = await tool?.execute('Test instruction');
 
       expect(result).toContain('Error: Agent failed');
     });

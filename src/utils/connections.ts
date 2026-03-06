@@ -57,7 +57,7 @@ export class AsyncExitStack {
     push(callback: () => Promise<void>): void {
         // Convert callback to context manager interface
         const contextManager = {
-            enter: async () => {},
+            enter: async () => { },
             exit: async (exc_type: any, exc_val: any, exc_tb: any): Promise<void> => {
                 await callback();
             },
@@ -103,7 +103,7 @@ export abstract class MCPConnection implements AsyncContextManager<MCPConnection
         return this;
     }
 
-    async exit(exc_type: any, exc_val: any, exc_tb: any): Promise<void> {
+    async exit(): Promise<void> {
         try {
             if (this.session) {
                 await this.session.close();

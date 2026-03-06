@@ -6,7 +6,7 @@ import { PostProcessor } from './hooks';
 
 // Message types
 export interface Message {
-    role: 'system' | 'user' | 'assistant';
+    role: 'system' | 'user' | 'assistant' | 'tool';
     content: string;
     images?: string | string[];
     type?: string;
@@ -25,12 +25,33 @@ export interface ModelResponse {
 
 // Tool types
 export interface ToolDescription {
+    /** Human-readable tool description used in prompts. */
     desc: string;
+    /** Tool executor that returns the tool result asynchronously. */
     execute: (...args: any[]) => Promise<any>;
+    /** Ordered argument names used to map model inputs to executor args. */
     argNames: string[];
+    /** Optional source/server identifier (e.g., class or MCP server name). */
     serverName?: string;
+    /** Optional function-calling JSON schema for providers like OpenAI. */
     inputSchema?: Record<string, any>;
 }
+interface OpenAIToolSchema {
+    type: 'function';
+    function: {
+        name: string;
+        description: string;
+        parameters: Record<string, any>;
+    };
+}
+
+interface AnthropicToolSchema {
+    name: string;
+    description: string;
+    input_schema: Record<string, any>;
+}
+
+export type ToolSchema = Partial<OpenAIToolSchema | AnthropicToolSchema>;
 
 export interface ToolStore {
     addTool: (
@@ -41,8 +62,11 @@ export interface ToolStore {
         serverName?: string,
         inputSchema?: Record<string, any>
     ) => void;
-    addMcpTools: (agentName: string, serverName: string, stack: any) => Promise<void>;
-    getMcpToolsSchemas: (agentName: string, serverName: string, provider: string) => any[];
+    addMcpTools: (
+        agentName: string,
+        serverNames: string[],
+        provider: string
+    ) => Promise<{ schemas: ToolSchema[]; cleanup: () => Promise<void> }>;
     getTool: (name: string) => ToolDescription | undefined;
     hasTool: (name: string) => boolean;
     listTools: () => string[];

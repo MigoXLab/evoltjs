@@ -12,6 +12,7 @@ import {
     Message,
     type AnyMessage,
 } from './messageV2';
+import { ExecutedToolcallProtocol, GeneratedToolcallProtocol } from '@/runtime/executors';
 
 // ---- Dependency interfaces ----
 
@@ -82,7 +83,7 @@ export type ToolcallSource = 'chat' | 'function_call';
  *
  * Corresponds to Python's GeneratedToolcallMessage.
  */
-export class GeneratedToolcallMessage {
+export class GeneratedToolcallMessage implements GeneratedToolcallProtocol {
     toolName: string;
     toolArguments: Record<string, any>;
     toolCallId: string;
@@ -95,15 +96,7 @@ export class GeneratedToolcallMessage {
      */
     rawContentFromLlm?: string;
 
-    constructor(config: {
-        toolName: string;
-        toolArguments?: Record<string, any>;
-        toolCallId?: string;
-        source?: ToolcallSource;
-        isSuccess?: boolean;
-        failedReason?: string;
-        rawContentFromLlm?: string;
-    }) {
+    constructor(config: GeneratedToolcallProtocol) {
         this.toolName = config.toolName;
         this.toolArguments = config.toolArguments ?? {};
         this.toolCallId = config.toolCallId ?? randomUUID();
@@ -430,7 +423,7 @@ export function extractToolcallsFromLlmMessage(
  *
  * Corresponds to Python's ExecutedToolcallMessage.
  */
-export class ExecutedToolcallMessage {
+export class ExecutedToolcallMessage implements ExecutedToolcallProtocol {
     metadata: GeneratedToolcallMessage;
     isSuccess: boolean;
     result: string | ToolMessage;

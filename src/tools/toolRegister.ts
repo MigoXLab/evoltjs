@@ -147,27 +147,28 @@ export function registerAgentAsTool(agents: any, verbose: boolean = false): stri
 
         const toolDesc = `Delegate tasks to sub-agent ${agent.name}.
     
-    Profile: ${agent.profile}
-    
-    Args:
-        instruction (str): Detailed task description or instruction for the agent. 
-                        Be specific about what you want the agent to accomplish.
-    
-    Returns:
-        str: The agent's execution result, including analysis, outputs, or conclusions.
-    
-    Examples:
-        <${agentName}>
-            <instruction>
-                Please analyze this data and provide insights on trends and patterns.
-            </instruction>
-        </${agentName}>
-    `;
+            Profile: ${agent.profile}
+            
+            Args:
+                instruction (str): Detailed task description or instruction for the agent. 
+                                Be specific about what you want the agent to accomplish.
+            
+            Returns:
+                str: The agent's execution result, including analysis, outputs, or conclusions.
+            
+            Examples:
+                <${agentName}>
+                    <instruction>
+                        Please analyze this data and provide insights on trends and patterns.
+                    </instruction>
+                    <images>["your_image.png",]</images>
+                </${agentName}>
+            `;
 
-        const agentExecute = async (instruction: string): Promise<string> => {
+        const agentExecute = async (instruction: string, images: string | string[] | undefined): Promise<string> => {
             try {
                 // Agent.run now returns string | any (with post_processor support)
-                const response = await (agent as any).run(instruction);
+                const response = await (agent as any).run(instruction, images);
 
                 // Handle string responses (default)
                 if (typeof response === 'string') {

@@ -2,7 +2,7 @@
  * Tests for MessageHistory class
  */
 
-import { MessageHistory } from '../../src/memory/messageHistory';
+import { MessageHistory } from '../../src/runtime/memory/messageHistory';
 import { Message } from '../../src/schemas/message';
 
 describe('MessageHistory', () => {
@@ -59,12 +59,12 @@ describe('MessageHistory', () => {
   });
 
   describe('formatForApi', () => {
-    it('should format messages for API', () => {
+    it('should format messages for API', async () => {
       const history = new MessageHistory('test-model', 'System', 4096);
       history.addMessage('user', 'Hello');
       history.addMessage('assistant', 'Hi');
       
-      const apiFormat = history.formatForApi();
+      const apiFormat = await history.formatForApi();
       
       expect(apiFormat).toHaveLength(3);
       expect(apiFormat[0]).toEqual({ role: 'system', content: 'System' });
@@ -181,9 +181,9 @@ describe('MessageHistory', () => {
       
       const str = history.toString();
       
-      expect(str).toContain('system: System');
-      expect(str).toContain('user: Hello');
-      expect(str).toContain('assistant: Hi');
+      expect(str).toContain('Message(role=system, content=System)');
+      expect(str).toContain('Message(role=user, content=Hello)');
+      expect(str).toContain('Message(role=assistant, content=Hi)');
     });
   });
 });

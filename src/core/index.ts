@@ -5,5 +5,5 @@
  */
 
 export { Agent } from './agent';
-export { Model, ModelResponse } from './model';
-export { AgentConfig, ToolExecutorProtocol } from './agentConfig';
+export { Model } from './model';
+export { AgentConfig } from './agentConfig';

@@ -9,6 +9,7 @@ import type {
     ChatCompletionAssistantMessageParam,
     ChatCompletionContentPart,
 } from 'openai/resources/chat/completions';
+import { AgentToolcall } from './toolcallv3';
 
 // ------------------------------------------------------------------
 // Types
@@ -29,11 +30,16 @@ export interface MessageParams {
 /** Params for AssistantMessage */
 export interface AssistantMessageParams extends MessageParams {
     tool_calls?: ChatCompletionAssistantMessageParam['tool_calls'];
+    agent_tool_calls?: AgentToolcall[];
 }
+
+/** Tool execution status, mirrors Python ToolMessage.status */
+export type ToolMessageStatus = 'success' | 'failed' | 'timeout' | 'running' | 'pending';
 
 /** Params for ToolMessage */
 export interface ToolMessageParams extends MessageParams {
     tool_call_id: string;
+    status?: ToolMessageStatus;
 }
 
 /** Union of all concrete message types */
@@ -277,11 +283,13 @@ export class ToolMessage extends Message {
     readonly role = 'tool' as const;
     tool_call_id: string;
     tool_name: string;
+    status: ToolMessageStatus;
 
     constructor(params: ToolMessageParams & { tool_name: string }) {
         super(params);
         this.tool_call_id = params.tool_call_id;
         this.tool_name = params.tool_name;
+        this.status = params.status ?? 'pending';
     }
 
     protected override getExtraFields() {
