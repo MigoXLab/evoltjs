@@ -31,6 +31,7 @@ export interface MessageParams {
 export interface AssistantMessageParams extends MessageParams {
     tool_calls?: ChatCompletionAssistantMessageParam['tool_calls'];
     agent_tool_calls?: AgentToolcall[];
+    toolcall_extraction_failed_msg?: Message;
 }
 
 /** Tool execution status, mirrors Python ToolMessage.status */
@@ -39,6 +40,7 @@ export type ToolMessageStatus = 'success' | 'failed' | 'timeout' | 'running' | '
 /** Params for ToolMessage */
 export interface ToolMessageParams extends MessageParams {
     tool_call_id: string;
+    tool_name: string;
     status?: ToolMessageStatus;
 }
 
@@ -130,39 +132,18 @@ export abstract class Message {
     // ------------------------------------------------------------------
     // API formatting
     // ------------------------------------------------------------------
-
-    /**
-     * Create a new message of the same type with pre/post context wrapped around the content.
-     */
-    withContext(preContent: string = '', postContent: string = ''): Message {
-        const content = this.formatContent(this.content, this.tag, preContent, postContent);
-        const Ctor = this.constructor as new (params: any) => Message;
-        return new Ctor({ content, tag: this.tag, ...this.getExtraFields() });
-    }
-
     /** Format message for OpenAI Chat Completions API. */
     formatForApi(preContent: string = '', postContent: string = ''): ChatCompletionMessageParam {
-        const msg = this.withContext(preContent, postContent);
         return {
-            role: msg.role,
-            content: msg.content,
-            ...msg.getExtraFields(),
+            role: this.role,
+            content: this.formatContent(this.content, this.tag, preContent, postContent),
+            ...this.getExtraFields(),
         } as ChatCompletionMessageParam;
     }
 
     // ------------------------------------------------------------------
     // Serialisation
     // ------------------------------------------------------------------
-
-    /** Convert to a plain object (POJO), stripping methods and empty keys. */
-    toObject(): Record<string, any> {
-        return {
-            role: this.role,
-            content: this.content,
-            tag: this.tag,
-            ...this.getExtraFields(),
-        };
-    }
 
     toString(): string {
         const parts: string[] = [`role=${this.role}`];

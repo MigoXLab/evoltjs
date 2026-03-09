@@ -12,6 +12,7 @@
   "scripts": {
     "dev": "tsup --watch",
     "build": "tsup",
+    "test": "jest",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -45,7 +46,7 @@
     "@modelcontextprotocol/sdk": "^1.22.0",
     "@types/uuid": "^10.0.0",
     "dotenv": "^17.2.3",
-    "file-type": "^21.3.0",
+    "js-tiktoken": "^1.0.21",
     "openai": "^6.9.1",
     "uuid": "^13.0.0",
     "winston": "^3.18.3",
