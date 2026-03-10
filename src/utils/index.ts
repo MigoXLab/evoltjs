@@ -3,7 +3,7 @@
  */
 
 export { AsyncExitStack } from './connections';
-export { hasToolcall, isWriteJsonFile, convertStrToObject, extractToolcallsFromStr, executeSingleTool, executeTools } from './toolUtil';
+export { isWriteJsonFile, convertStrToObject, extractToolcallsFromStr } from './toolUtil';
 export { MessageCost } from './cost';
 import loggers from './logger';
 

@@ -4,16 +4,16 @@
  * Implements ToolExecutorProtocol using dynamic snapshotting for background tasks,
  * eliminating busy polling and keeping the process state management cohesive.
  *
- * Input:  AgentToolcall  (schemas/toolcallv3)
- * Output: ToolMessage[]  (schemas/messageV2)
+ * Input:  AgentToolcall  (schemas/toolCall)
+ * Output: ToolMessage[]  (schemas/message)
  */
 
 import * as fs from 'fs';
 import * as os from 'os';
 import { spawn, ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
-import { AgentToolcall } from '../../schemas/toolcallv3';
-import { ToolMessage } from '../../schemas/messageV2';
+import { AgentToolcall } from '../../schemas/toolCall';
+import { ToolMessage } from '../../schemas/message';
 import { ToolStore } from '../../types';
 import { logger } from '../../utils';
 import { ToolExecutorProtocol, ExecutorStatus } from './base';

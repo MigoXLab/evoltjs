@@ -5,7 +5,7 @@
  * Used by ReflexionOrchestrator for environment feedback
  */
 
-import { UserMessage, type AnyMessage } from './messageV2';
+import { UserMessage, type AnyMessage } from './message';
 
 // ------------------------------------------------------------------
 // Feedback

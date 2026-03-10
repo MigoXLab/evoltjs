@@ -5,8 +5,8 @@
  */
 
 import { ToolStore } from '../../types';
-import { AgentToolcall } from '../../schemas/toolcallv3';
-import { ToolMessage } from '../../schemas/messageV2';
+import { AgentToolcall } from '../../schemas/toolCall';
+import { ToolMessage } from '../../schemas/message';
 import { logger } from '../../utils';
 
 /**

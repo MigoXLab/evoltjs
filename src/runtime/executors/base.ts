@@ -9,8 +9,8 @@
  * - ToolExecutorProtocol: Interface for tool execution backends (AgentToolcall / ToolMessage based)
  */
 
-import { AgentToolcall } from '../../schemas/toolcallv3';
-import { ToolMessage } from '../../schemas/messageV2';
+import { AgentToolcall } from '../../schemas/toolCall';
+import { ToolMessage } from '../../schemas/message';
 
 export interface ExecutorStatus {
     started: boolean;

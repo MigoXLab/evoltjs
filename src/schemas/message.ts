@@ -1,177 +1,300 @@
 /**
- * Message class for conversation history
+ * Message classes for conversation history
  *
- * Converts Python's message.py to TypeScript
+ * Base class + 4 role-specific subclasses, aligned with OpenAI Chat Completions API.
  */
 
-import * as fs from 'fs';
-import { Message as MessageType } from '../types';
+import type {
+    ChatCompletionMessageParam,
+    ChatCompletionAssistantMessageParam,
+    ChatCompletionContentPart,
+} from 'openai/resources/chat/completions';
+import { AgentToolcall } from './toolCall';
 
-/**
- * Content types for Vision API
- */
-interface TextContent {
-    type: 'text';
-    text: string;
+// ------------------------------------------------------------------
+// Types
+// ------------------------------------------------------------------
+
+/** Role type derived from OpenAI SDK */
+export type MessageRole = ChatCompletionMessageParam['role'];
+
+/** Content type matching OpenAI format: plain string or array of content parts */
+export type MessageContent = string | ChatCompletionContentPart[];
+
+/** Base params accepted by all message constructors */
+export interface MessageParams {
+    content: MessageContent;
+    tag?: string;
 }
 
-interface ImageUrlContent {
-    type: 'image_url';
-    image_url: { url: string };
+/** Params for AssistantMessage */
+export interface AssistantMessageParams extends MessageParams {
+    tool_calls?: ChatCompletionAssistantMessageParam['tool_calls'];
+    agent_tool_calls?: AgentToolcall[];
 }
 
-type ContentPart = TextContent | ImageUrlContent;
+/** Tool execution status, mirrors Python ToolMessage.status */
+export type ToolMessageStatus = 'success' | 'failed' | 'timeout' | 'running' | 'pending';
+
+/** Params for ToolMessage */
+export interface ToolMessageParams extends MessageParams {
+    tool_call_id: string;
+    tool_name: string;
+    status?: ToolMessageStatus;
+    preContent?: string;
+    postContent?: string;
+    source: 'chat' | 'function_call';
+}
+
+/** Union of all concrete message types */
+export type AnyMessage = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
+
+// ------------------------------------------------------------------
+// Base class
+// ------------------------------------------------------------------
 
 /**
- * Message class representing a single message in conversation
+ * Abstract base class representing a single message in conversation.
+ *
+ * All shared methods live here. Subclasses define `role` and
+ * override `getExtraFields()` to expose role-specific fields.
  */
-export class Message implements MessageType {
-    role: 'system' | 'user' | 'assistant';
-    content: string;
-    images?: string | string[];
-    type?: string;
+export abstract class Message {
+    abstract readonly role: MessageRole;
 
-    constructor(role: 'system' | 'user' | 'assistant', content: string, images?: string | string[], type?: string) {
-        this.role = role;
-        this.content = content;
-        this.images = images;
-        this.type = type;
+    content: MessageContent;
+    tag: string;
+
+    constructor(params: MessageParams) {
+        this.content = params.content;
+        this.tag = params.tag ?? '';
     }
 
-    /**
-     * Create message from user input
-     */
-    static fromUserMsg(content: string, images?: string | string[]): Message {
-        return new Message('user', content, images);
-    }
+    // ------------------------------------------------------------------
+    // Content helpers
+    // ------------------------------------------------------------------
 
-    /**
-     * Create message from assistant response
-     */
-    static fromAssistantMsg(content: string): Message {
-        return new Message('assistant', content);
-    }
-
-    /**
-     * Create system message
-     */
-    static fromSystemMsg(content: string): Message {
-        return new Message('system', content);
-    }
-
-    /**
-     * Convert to plain object for API calls
-     */
-    toObject(): any {
-        const obj: any = {
-            role: this.role,
-            content: this.content,
-        };
-
-        if (this.images) {
-            obj.images = this.images;
+    isTruthy(): boolean {
+        if (typeof this.content === 'string') {
+            return Boolean(this.content.trim());
         }
-
-        if (this.type) {
-            obj.type = this.type;
-        }
-
-        return obj;
-    }
-
-    /**
-     * Check if message contains images
-     */
-    hasImages(): boolean {
-        return !!this.images && (Array.isArray(this.images) ? this.images.length > 0 : true);
-    }
-
-    /**
-     * Get message content length
-     */
-    getContentLength(): number {
-        return this.content.length;
-    }
-
-    /**
-     * Convert to string representation
-     */
-    toString(): string {
-        return `${this.role}: ${this.content}`;
-    }
-
-    /**
-     * Convert to OpenAI Vision API format with base64-encoded images
-     * This method handles:
-     * - HTTP/HTTPS URLs: Downloads and converts to base64
-     * - Local file paths: Reads file and converts to base64
-     * - Already base64 strings: Passes through
-     */
-    async toChatMessage(): Promise<Record<string, any>> {
-        const role = this.role;
-
-        if (!this.hasImages()) {
-            return { role, content: this.content };
-        }
-
-        const content: ContentPart[] = [{ type: 'text', text: this.content }];
-        const imageArray = Array.isArray(this.images) ? this.images : [this.images!];
-
-        for (const img of imageArray) {
-            let base64Data: string;
-
-            if (img.startsWith('http://') || img.startsWith('https://')) {
-                base64Data = await this.encodeHttpImage(img);
-            } else if (fs.existsSync(img)) {
-                base64Data = await this.encodeLocalFile(img);
-            } else {
-                // Assume already base64
-                base64Data = img;
+        if (Array.isArray(this.content)) {
+            for (const part of this.content) {
+                if (part.type === 'text' && Boolean(part.text.trim())) {
+                    return true;
+                }
             }
+        }
+        return false;
+    }
 
-            const mimeType = this.getMimeType(img);
-            content.push({
-                type: 'image_url',
-                image_url: { url: `data:${mimeType};base64,${base64Data}` },
-            });
+    /**
+     * Format content with optional tag wrapping and pre/post content.
+     * Handles both string and ContentPart[] formats.
+     */
+    protected formatContent(
+        content: MessageContent,
+        tag: string = '',
+        preContent: string = '',
+        postContent: string = '',
+    ): MessageContent {
+        if (typeof content === 'string') {
+            content = content.trim() || ' '; // ensure non-empty
+            return tag
+                ? `${preContent}<${tag}>\n${content}\n</${tag}>${postContent}`.trim()
+                : `${preContent}\n${content}\n${postContent}`.trim();
         }
 
-        return { role, content };
-    }
-
-    /**
-     * Get MIME type from file path or URL
-     */
-    private getMimeType(path: string): string {
-        const ext = path.toLowerCase().split('.').pop();
-        const mimeTypes: Record<string, string> = {
-            png: 'image/png',
-            jpg: 'image/jpeg',
-            jpeg: 'image/jpeg',
-            gif: 'image/gif',
-            webp: 'image/webp',
-            bmp: 'image/bmp',
-        };
-        return mimeTypes[ext || ''] || 'image/jpeg';
-    }
-
-    /**
-     * Encode local file to base64
-     */
-    private async encodeLocalFile(filePath: string): Promise<string> {
-        const fileBuffer = await fs.promises.readFile(filePath);
-        return fileBuffer.toString('base64');
-    }
-
-    /**
-     * Fetch and encode HTTP image to base64
-     */
-    private async encodeHttpImage(url: string): Promise<string> {
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch image from ${url}: ${response.statusText}`);
+        // content is ContentPart[]
+        const result: ChatCompletionContentPart[] = [];
+        if (preContent) {
+            result.push({ type: 'text', text: preContent });
         }
-        const buffer = await response.arrayBuffer();
-        return Buffer.from(buffer).toString('base64');
+        for (const block of content) {
+            result.push(block);
+        }
+        if (postContent) {
+            result.push({ type: 'text', text: postContent });
+        }
+        return result;
+    }
+
+    // ------------------------------------------------------------------
+    // Extension hook for subclass-specific fields
+    // ------------------------------------------------------------------
+
+    /**
+     * Return role-specific fields (e.g. tool_call_id, tool_calls).
+     * Base returns empty — subclasses override as needed.
+     */
+    protected getExtraFields(): Record<string, any> {
+        return {};
+    }
+
+    // ------------------------------------------------------------------
+    // API formatting
+    // ------------------------------------------------------------------
+    /** Format message for OpenAI Chat Completions API. */
+    formatForApi(preContent: string = '', postContent: string = ''): ChatCompletionMessageParam {
+        return {
+            role: this.role,
+            content: this.formatContent(this.content, this.tag, preContent, postContent),
+            ...this.getExtraFields(),
+        } as ChatCompletionMessageParam;
+    }
+
+    // ------------------------------------------------------------------
+    // Serialisation
+    // ------------------------------------------------------------------
+
+    toString(): string {
+        const parts: string[] = [`role=${this.role}`];
+
+        if (typeof this.content === 'string') {
+            const truncated =
+                this.content.length > 100
+                    ? this.content.slice(0, 100) + '...'
+                    : this.content;
+            parts.push(`content=${truncated}`);
+        } else if (Array.isArray(this.content)) {
+            for (const item of this.content) {
+                if (item instanceof Object) {
+                    if (item.type === 'text') {
+                        const truncated =
+                            item.text.length > 100
+                                ? item.text.slice(0, 100) + '...'
+                                : item.text;
+                        parts.push(`content=${truncated}`);
+                    } else if (item.type === 'image_url') {
+                        const url = item.image_url.url;
+                        const truncated = url.length > 100
+                            ? url.slice(0, 100) + '...(truncated)'
+                            : url;
+                        parts.push(`image_url=${truncated}`);
+                    }
+                } else {
+                    parts.push(`content=${item}`);
+                }
+            }
+        }
+
+        if (this.tag) parts.push(`tag=${this.tag}`);
+
+        return `Message(${parts.join(', ')})`;
+    }
+
+    // ------------------------------------------------------------------
+    // Merge & Clone
+    // ------------------------------------------------------------------
+
+    /** Merge two messages of the same role into one. */
+    merge(other: Message): Message {
+        if (this.role !== other.role) {
+            throw new Error('Messages must have the same role to merge');
+        }
+
+        let content: MessageContent;
+        const selfContent = this.content;
+        const otherContent = other.content;
+
+        if (typeof selfContent === 'string' && typeof otherContent === 'string') {
+            if (this.tag !== other.tag) {
+                content =
+                    (this.formatContent(selfContent, this.tag) as string)
+                    + '\n'
+                    + (this.formatContent(otherContent, other.tag) as string);
+            } else {
+                content = this.formatContent(
+                    selfContent + '\n' + otherContent,
+                    this.tag,
+                ) as string;
+            }
+        } else if (typeof selfContent === 'string' && Array.isArray(otherContent)) {
+            content = [
+                { type: 'text' as const, text: this.formatContent(selfContent, this.tag) as string },
+                ...otherContent,
+            ];
+        } else if (Array.isArray(selfContent) && typeof otherContent === 'string') {
+            content = [
+                ...selfContent,
+                { type: 'text' as const, text: this.formatContent(otherContent, other.tag) as string },
+            ];
+        } else {
+            // both are ContentPart[]
+            content = [
+                ...(selfContent as ChatCompletionContentPart[]),
+                ...(otherContent as ChatCompletionContentPart[]),
+            ];
+        }
+
+        const Ctor = this.constructor as new (params: any) => Message;
+        return new Ctor({
+            content,
+            tag: this.tag !== other.tag ? '' : this.tag,
+            ...this.getExtraFields(),
+        });
+    }
+}
+
+// ------------------------------------------------------------------
+// Subclasses
+// ------------------------------------------------------------------
+
+export class SystemMessage extends Message {
+    readonly role = 'system' as const;
+}
+
+export class UserMessage extends Message {
+    readonly role = 'user' as const;
+}
+
+export class AssistantMessage extends Message {
+    readonly role = 'assistant' as const;
+    tool_calls?: ChatCompletionAssistantMessageParam['tool_calls'];
+    agent_tool_calls?: AgentToolcall[];
+
+    constructor(params: AssistantMessageParams) {
+        super(params);
+        this.tool_calls = params.tool_calls;
+        this.agent_tool_calls = params.agent_tool_calls;
+    }
+
+    protected override getExtraFields() {
+        return this.tool_calls?.length ? { tool_calls: this.tool_calls } : {};
+    }
+}
+
+export class ToolMessage extends Message {
+    readonly role = 'tool' as const;
+    tool_call_id: string;
+    tool_name: string;
+    status: ToolMessageStatus;
+    preContent: string;
+    postContent: string;
+    source: 'chat' | 'function_call';
+
+    constructor(params: ToolMessageParams & { tool_name: string }) {
+        super(params);
+        this.tool_call_id = params.tool_call_id;
+        this.tool_name = params.tool_name;
+        this.status = params.status ?? 'pending';
+        this.preContent = params.preContent ?? '';
+        this.postContent = params.postContent ?? '';
+        this.source = params.source;
+    }
+
+    override formatForApi(preContent: string = '', postContent: string = ''): ChatCompletionMessageParam {
+        const _preContent = preContent || this.preContent;
+        const _postContent = postContent || this.postContent;
+        return {
+            role: this.source === 'function_call' ? 'tool' : 'user',
+            content: this.formatContent(this.content, this.tag, _preContent, _postContent),
+            tool_call_id: this.tool_call_id,
+            tool_name: this.tool_name,
+        } as ChatCompletionMessageParam;
+    }
+
+    protected override getExtraFields() {
+        return { tool_call_id: this.tool_call_id, tool_name: this.tool_name };
     }
 }

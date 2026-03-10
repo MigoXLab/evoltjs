@@ -14,8 +14,8 @@ import type { ChatCompletionAssistantMessageParam, ChatCompletionMessageFunction
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger, streamLogger } from '../utils';
-import { AssistantMessage, AssistantMessageParams, ToolMessage } from '@/schemas/messageV2';
-import { AgentToolcall } from '@/schemas/toolcallv3';
+import { AssistantMessage, AssistantMessageParams, ToolMessage } from '@/schemas/message';
+import { AgentToolcall } from '@/schemas/toolCall';
 import { extractToolcallsFromStr } from '@/utils/toolUtil';
 import { SystemToolStore } from '@/tools';
 

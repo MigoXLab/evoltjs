@@ -6,7 +6,7 @@
 
 import { ChatCompletionContentPart, ChatCompletionContentPartImage, ChatCompletionContentPartText, ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import { encodingForModel, getEncoding, Tiktoken } from 'js-tiktoken';
-import { AnyMessage, MessageContent } from '../../schemas/messageV2';
+import { AnyMessage, MessageContent } from '../../schemas/message';
 
 type PersistRecord = { data?: { message?: ChatCompletionMessageParam } };
 

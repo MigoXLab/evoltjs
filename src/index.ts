@@ -12,7 +12,7 @@ export { Model } from './core/model';
 export { AgentConfig } from './core/agentConfig';
 
 // Schema exports
-export { Message, Toolcall, ToolcallState, ToolcallType } from './schemas';
+export { AnyMessage, AssistantMessage, ToolMessage, UserMessage } from './schemas/message';
 
 // Runtime: Memory exports (moved from memory/ to runtime/memory/)
 export { MessageHistory } from './runtime/memory';

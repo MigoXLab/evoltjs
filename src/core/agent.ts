@@ -18,7 +18,7 @@ import { LocalToolExecutor, ToolExecutorProtocol } from '../runtime/executors';
 import { SKILLS_DIR } from '../configs/paths';
 import { areadImage } from '../utils/readImage';
 import { ChatCompletionFunctionTool } from 'openai/resources/index';
-import { AssistantMessage, ToolMessage, UserMessage } from '@/schemas/messageV2';
+import { AssistantMessage, ToolMessage, UserMessage } from '@/schemas/message';
 
 /**
  * Main Agent class

@@ -4,41 +4,12 @@
  * Converts Python's tool_util.py to TypeScript
  */
 
-import { logger } from './index';
-import { Toolcall } from '../schemas/toolCall';
-import type { ToolcallState, ToolcallType } from '../schemas/toolCall';
 import { ToolStore } from '@/types';
-import { AgentToolcall } from '@/schemas/toolcallv3';
+import { AgentToolcall } from '@/schemas/toolCall';
 import crypto from 'crypto';
 
 // Re-export for convenience
-export { Toolcall, ToolcallState, ToolcallType };
-
-/**
- * Check if message contains tool calls
- */
-export function hasToolcall(msg: string | Toolcall[], toolStore?: Record<string, any>): boolean {
-    if (typeof msg === 'string') {
-        if (!toolStore) return false;
-
-        for (const toolName of Object.keys(toolStore)) {
-            if (msg.includes(`<${toolName}>`) && msg.includes(`</${toolName}>`)) {
-                return true;
-            }
-        }
-        return false;
-    } else if (Array.isArray(msg)) {
-        for (const t of msg) {
-            if (t instanceof Toolcall && t.name) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    logger.error(`msg: ${msg} is not a valid list.`);
-    return false;
-}
+export { AgentToolcall };
 
 /**
  * Check if writing JSON file
@@ -207,98 +178,6 @@ export function extractToolcallsFromStr(txt: string, toolStore: ToolStore): Agen
     // Sort by occurrence order and return
     matches.sort((a, b) => a[0] - b[0]);
     return matches.map(([, tc]) => tc);
-}
-
-/**
- * Execute a single tool
- */
-export async function executeSingleTool(toolcall: Toolcall, toolStore: Record<string, any>[]): Promise<Toolcall> {
-    if (!Array.isArray(toolStore)) {
-        toolStore = [toolStore];
-    }
-
-    // Return failed toolcall
-    if (!toolcall.isExtractedSuccess) {
-        return toolcall;
-    }
-
-    try {
-        // Execute the tool directly
-        if (toolcall.name && !toolcall.name.startsWith('FileEditor.') && !toolcall.name.startsWith('ThinkTool.')) {
-            logger.info(`Executing Tool ${toolcall.name} with arguments: ${JSON.stringify(toolcall.input)}`);
-        }
-
-        for (const ts of toolStore) {
-            let toolCall: any;
-            let argNames: string[] = [];
-
-            // Check if tool store has the tool
-            // Support both class-based ToolStore (with hasTool/getTool) and object-based store
-            if (typeof ts.hasTool === 'function' && ts.hasTool(toolcall.name)) {
-                const toolDesc = ts.getTool(toolcall.name);
-                toolCall = toolDesc ? toolDesc.execute : undefined;
-                argNames = toolDesc ? toolDesc.argNames : [];
-            } else if (toolcall.name in ts) {
-                toolCall = ts[toolcall.name].execute;
-                argNames = ts[toolcall.name].argNames || [];
-            }
-
-            if (toolCall) {
-                let result: any;
-
-                if (typeof toolCall === 'function') {
-                    // Map arguments based on argNames if available
-                    if (argNames && argNames.length > 0) {
-                        // Map input object to argument list based on docstring parameter order
-                        const args = argNames.map(name => toolcall.input[name]);
-                        result = await toolCall(...args);
-                    } else {
-                        // Fallback: pass the input object directly
-                        // This handles cases where tool takes a single object argument or no arguments
-                        result = await toolCall(toolcall.input);
-                    }
-                } else {
-                    logger.error(`Tool ${toolcall.name} is not callable`);
-                    toolcall.executedContent = `Tool '${toolcall.name}' is not callable`;
-                    toolcall.executedState = 'failed';
-                    return toolcall;
-                }
-
-                toolcall.executedContent = String(result);
-                toolcall.executedState = 'success';
-                return toolcall;
-            }
-        }
-
-        // Tool not found
-        toolcall.executedContent = `Tool '${toolcall.name}' not found in tool_store. Please check the tool name.`;
-        toolcall.executedState = 'failed';
-        return toolcall;
-    } catch (error) {
-        const errorMsg = `Error executing tool: ${error}`;
-        toolcall.executedContent = errorMsg;
-        toolcall.executedState = 'failed';
-        return toolcall;
-    }
-}
-
-/**
- * Execute multiple tools
- */
-export async function executeTools(
-    toolCalls: Toolcall[],
-    toolStore: Record<string, any>[],
-    parallel: boolean = false
-): Promise<Toolcall[]> {
-    if (parallel) {
-        return Promise.all(toolCalls.map(call => executeSingleTool(call, toolStore)));
-    } else {
-        const results: Toolcall[] = [];
-        for (const call of toolCalls) {
-            results.push(await executeSingleTool(call, toolStore));
-        }
-        return results;
-    }
 }
 
 /**
