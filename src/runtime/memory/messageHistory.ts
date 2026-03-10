@@ -149,7 +149,7 @@ export class MessageHistory {
     /**
      * Get messages formatted for API calls
      */
-    async formatForApi(): Promise<any[]> {
+    formatForApi(): ChatCompletionMessageParam[] {
         const history: ChatCompletionMessageParam[] = [];
 
         for (let i = 0; i < this.messages.length; i++) {

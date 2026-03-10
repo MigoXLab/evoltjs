@@ -125,6 +125,7 @@ class BackgroundJob {
             tool_name: this.toolcall.tool_name,
             content: `COMMAND: ${this.command}\nPROCESS ID: ${this.processId}\nSTATUS: The process is still executing in the background...\nLATEST OUTPUT:\n${latestOutput}`,
             status: 'running',
+            source: this.toolcall.source,
         });
     }
 
@@ -141,6 +142,7 @@ class BackgroundJob {
             tool_name: this.toolcall.tool_name,
             content: parts.join('\n\n'),
             status: 'success',
+            source: this.toolcall.source,
         });
     }
 }
@@ -519,6 +521,7 @@ export class LocalToolExecutor implements ToolExecutorProtocol {
             tool_name: toolcall.tool_name,
             content: resultContent,
             status: resultStatus,
+            source: toolcall.source,
         }));
     }
 

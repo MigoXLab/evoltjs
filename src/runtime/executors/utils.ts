@@ -29,6 +29,7 @@ export async function _executeSingleTool(
             tool_name: toolcall.tool_name,
             content,
             status,
+            source: toolcall.source,
         });
 
     // TaskCompletion pseudo-tool

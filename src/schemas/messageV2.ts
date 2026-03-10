@@ -31,7 +31,6 @@ export interface MessageParams {
 export interface AssistantMessageParams extends MessageParams {
     tool_calls?: ChatCompletionAssistantMessageParam['tool_calls'];
     agent_tool_calls?: AgentToolcall[];
-    toolcall_extraction_failed_msg?: Message;
 }
 
 /** Tool execution status, mirrors Python ToolMessage.status */
@@ -42,6 +41,9 @@ export interface ToolMessageParams extends MessageParams {
     tool_call_id: string;
     tool_name: string;
     status?: ToolMessageStatus;
+    preContent?: string;
+    postContent?: string;
+    source: 'chat' | 'function_call';
 }
 
 /** Union of all concrete message types */
@@ -249,10 +251,12 @@ export class UserMessage extends Message {
 export class AssistantMessage extends Message {
     readonly role = 'assistant' as const;
     tool_calls?: ChatCompletionAssistantMessageParam['tool_calls'];
+    agent_tool_calls?: AgentToolcall[];
 
     constructor(params: AssistantMessageParams) {
         super(params);
         this.tool_calls = params.tool_calls;
+        this.agent_tool_calls = params.agent_tool_calls;
     }
 
     protected override getExtraFields() {
@@ -265,12 +269,29 @@ export class ToolMessage extends Message {
     tool_call_id: string;
     tool_name: string;
     status: ToolMessageStatus;
+    preContent: string;
+    postContent: string;
+    source: 'chat' | 'function_call';
 
     constructor(params: ToolMessageParams & { tool_name: string }) {
         super(params);
         this.tool_call_id = params.tool_call_id;
         this.tool_name = params.tool_name;
         this.status = params.status ?? 'pending';
+        this.preContent = params.preContent ?? '';
+        this.postContent = params.postContent ?? '';
+        this.source = params.source;
+    }
+
+    override formatForApi(preContent: string = '', postContent: string = ''): ChatCompletionMessageParam {
+        const _preContent = preContent || this.preContent;
+        const _postContent = postContent || this.postContent;
+        return {
+            role: this.source === 'function_call' ? 'tool' : 'user',
+            content: this.formatContent(this.content, this.tag, _preContent, _postContent),
+            tool_call_id: this.tool_call_id,
+            tool_name: this.tool_name,
+        } as ChatCompletionMessageParam;
     }
 
     protected override getExtraFields() {

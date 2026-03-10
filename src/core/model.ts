@@ -7,20 +7,24 @@
  * - Google Gemini
  */
 
-import { ModelConfig, ModelError } from '../types';
+import { ModelConfig, ModelError, ToolSchema } from '../types';
 import { loadModelConfig } from '../configs/configLoader';
 import OpenAI from 'openai';
+import type { ChatCompletionAssistantMessageParam, ChatCompletionMessageFunctionToolCall, ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logger, streamLogger } from '../utils';
+import { AssistantMessage, AssistantMessageParams, ToolMessage } from '@/schemas/messageV2';
+import { AgentToolcall } from '@/schemas/toolcallv3';
+import { extractToolcallsFromStr } from '@/utils/toolUtil';
+import { SystemToolStore } from '@/tools';
 
 /**
- * Model response interface
+ * Model call result with assistant output and parsing failures.
  */
-export interface ModelResponse {
-    type: 'system' | 'user' | 'TaskCompletion';
-    extractedResult: () => string | any[] | Record<string, any>;
-    rawContentFromLlm?: string;
+export interface ModelAchatResult {
+    assistantMessage: AssistantMessage;
+    parsingFailedToolMessages: ToolMessage[];
 }
 
 /**
@@ -86,7 +90,7 @@ export class Model {
     /**
      * Asynchronous chat completion
      */
-    async achat(messages: any[], tools?: any[], stream: boolean = true): Promise<ModelResponse[]> {
+    async achat(messages: ChatCompletionMessageParam[], tools: ToolSchema[] = [], stream: boolean = true): Promise<ModelAchatResult> {
         const provider = this.config.provider.toLowerCase();
         const useStream = stream !== undefined ? stream : !!this.config.stream;
 
@@ -95,9 +99,9 @@ export class Model {
                 case 'openai':
                 case 'deepseek':
                 case 'anthropic':
-                    return await this._callOpenAICompatible(messages, tools, useStream);
+                    return this._callOpenAICompatible(messages, tools, useStream);
                 case 'gemini':
-                    return await this._callGemini(messages, tools, useStream);
+                    return this._callGemini(messages, tools, useStream);
                 default:
                     throw new ModelError(`Unsupported provider: ${provider}`);
             }
@@ -110,7 +114,65 @@ export class Model {
     /**
      * Call OpenAI-compatible API (OpenAI, DeepSeek, etc.)
      */
-    private async _callOpenAICompatible(messages: any[], tools?: any[], stream: boolean = false): Promise<ModelResponse[]> {
+    private buildAchatResult(assistantMessage: Omit<AssistantMessageParams, 'agent_tool_calls'>): ModelAchatResult {
+        const parsingFailedToolMessages: ToolMessage[] = [];
+        const agentToolCalls: AgentToolcall[] = [];
+        const toolCalls = assistantMessage.tool_calls || [];
+
+        if (toolCalls.length > 0) {
+            // use the first function call to get the tool name and arguments
+            const firstToolCall = toolCalls[0] as ChatCompletionMessageFunctionToolCall;
+            const toolName = firstToolCall.function.name || 'unknown_tool';
+            const toolArguments = firstToolCall.function.arguments || '';
+            try {
+                agentToolCalls.push({
+                    tool_call_id: firstToolCall.id,
+                    tool_name: toolName,
+                    tool_arguments: JSON.parse(toolArguments),
+                    source: 'function_call',
+                });
+            } catch (error: any) {
+                const errorMsg = error?.message || 'Unknown JSON parse error';
+                parsingFailedToolMessages.push(
+                    new ToolMessage({
+                        content: assistantMessage.content + toolArguments,
+                        tag: 'ToolcallExtractionFailed',
+                        tool_call_id: firstToolCall.id || `ft_parse_error_${Date.now()}`,
+                        tool_name: toolName,
+                        status: 'failed',
+                        preContent: `Error parsing JSON arguments for argument content of the tool call ${toolName}, error is ${errorMsg}: `,
+                        source: 'function_call',
+                    })
+                );
+            }
+        } else if (typeof assistantMessage.content === 'string' && assistantMessage.content.trim().length > 0) {
+            try {
+                agentToolCalls.push(...extractToolcallsFromStr(assistantMessage.content, SystemToolStore));
+            } catch (error: any) {
+                parsingFailedToolMessages.push(
+                    new ToolMessage({
+                        content: assistantMessage.content,
+                        tag: 'ToolcallExtractionFailed',
+                        tool_call_id: `ct_parse_error_${Date.now()}`,
+                        tool_name: 'unknown_tool',
+                        status: 'failed',
+                        preContent: `Error parsing chat toolcalls from assistant content: ${error?.message || String(error)}`,
+                        postContent: `The chat toolcall extraction failed. According to the chain cut-off strategy, all subsequent Toolcalls are discarded.`,
+                        source: 'chat',
+                    })
+                );
+            }
+        }
+
+        (assistantMessage as any).agent_tool_calls = agentToolCalls;
+
+        return {
+            assistantMessage: new AssistantMessage(assistantMessage),
+            parsingFailedToolMessages,
+        };
+    }
+
+    private async _callOpenAICompatible(messages: ChatCompletionMessageParam[], tools?: ToolSchema[], stream: boolean = false): Promise<ModelAchatResult> {
         if (!this.openaiClient) {
             throw new ModelError('OpenAI client not initialized');
         }
@@ -183,27 +245,17 @@ export class Model {
                 const hasToolCalls = toolCalls.length > 0;
 
                 if (hasToolCalls) {
-                    return [
-                        {
-                            type: 'user',
-                            extractedResult: () => ({
-                                role: 'assistant',
-                                content: fullContent,
-                                tool_calls: toolCalls,
-                            }),
-                        },
-                    ];
+                    return this.buildAchatResult({
+                        content: fullContent,
+                        tool_calls: toolCalls,
+                    });
                 }
 
                 // Return as system response (may contain XML tool calls or TaskCompletion)
                 // Agent loop will extract tools and exit when no more tools remain
-                return [
-                    {
-                        type: 'system',
-                        extractedResult: () => fullContent,
-                        rawContentFromLlm: fullContent,
-                    },
-                ];
+                return this.buildAchatResult({
+                    content: fullContent,
+                });
             } else {
                 // Non-streaming
                 const response = await this.openaiClient.chat.completions.create(params);
@@ -218,27 +270,17 @@ export class Model {
 
                 // Handle tool calls
                 if (hasToolCalls) {
-                    return [
-                        {
-                            type: 'user',
-                            extractedResult: () => ({
-                                role: 'assistant',
-                                content: messageContent,
-                                tool_calls: message.tool_calls,
-                            }),
-                        },
-                    ];
+                    return this.buildAchatResult({
+                        content: messageContent,
+                        tool_calls: message.tool_calls,
+                    });
                 }
 
                 // Return as system response (may contain XML tool calls or TaskCompletion)
                 // Agent loop will extract tools and exit when no more tools remain
-                return [
-                    {
-                        type: 'system',
-                        extractedResult: () => messageContent,
-                        rawContentFromLlm: messageContent,
-                    },
-                ];
+                return this.buildAchatResult({
+                    content: messageContent,
+                });
             }
         } catch (error: any) {
             const errorMsg = error.message || 'Unknown error';
@@ -249,15 +291,15 @@ export class Model {
     /**
      * Call Anthropic API
      */
-    private async _callAnthropic(messages: any[], tools?: any[], stream: boolean = false): Promise<ModelResponse[]> {
+    private async _callAnthropic(messages: ChatCompletionMessageParam[], tools?: ToolSchema[], stream: boolean = false): Promise<ModelAchatResult> {
         if (!this.anthropicClient) {
             throw new ModelError('Anthropic client not initialized');
         }
 
         try {
             // Anthropic requires system message to be separate
-            const systemMessage = messages.find((m: any) => m.role === 'system');
-            const nonSystemMessages = messages.filter((m: any) => m.role !== 'system');
+            const systemMessage = messages.find((m: ChatCompletionMessageParam) => m.role === 'system');
+            const nonSystemMessages = messages.filter((m: ChatCompletionMessageParam) => m.role !== 'system');
 
             const params: any = {
                 model: this.config.model || 'claude-3-sonnet-20240229',
@@ -265,20 +307,34 @@ export class Model {
                 max_tokens: this.config.maxOutputTokens || 4096,
                 temperature: this.config.temperature || 0.7,
                 top_p: this.config.topP || 0.9,
-                stream: stream,
+                stream,
             };
 
-            if (systemMessage) {
+            if (systemMessage && typeof systemMessage.content === 'string') {
                 params.system = systemMessage.content;
             }
 
             // Add tools if provided (convert to Anthropic format)
             if (tools && tools.length > 0) {
-                params.tools = tools.map((tool: any) => ({
-                    name: tool.function?.name || tool.name,
-                    description: tool.function?.description || tool.description,
-                    input_schema: tool.function?.parameters || tool.input_schema,
-                }));
+                params.tools = tools
+                    .map((tool: ToolSchema) => {
+                        if ('function' in tool && tool.function) {
+                            return {
+                                name: tool.function.name,
+                                description: tool.function.description,
+                                input_schema: tool.function.parameters,
+                            };
+                        }
+                        if ('name' in tool && 'input_schema' in tool && tool.name && tool.input_schema) {
+                            return {
+                                name: tool.name,
+                                description: tool.description || '',
+                                input_schema: tool.input_schema,
+                            };
+                        }
+                        return null;
+                    })
+                    .filter(Boolean);
             }
 
             if (stream) {
@@ -312,18 +368,9 @@ export class Model {
                 // For streaming, we need to collect tool_use blocks from the final message
                 // Since the SDK doesn't provide a clean way to get this during streaming,
                 // we'll make another non-streaming call or handle differently
-                const hasContent = fullContent.trim().length > 0;
-                const hasToolUses = toolUses.length > 0;
-
-                // Return as system response (may contain XML tool calls or TaskCompletion)
-                // Agent loop will extract tools and exit when no more tools remain
-                return [
-                    {
-                        type: 'system',
-                        extractedResult: () => fullContent || toolUses,
-                        rawContentFromLlm: fullContent,
-                    },
-                ];
+                return this.buildAchatResult({
+                    content: fullContent || JSON.stringify(toolUses),
+                });
             } else {
                 // Non-streaming
                 const response = await this.anthropicClient.messages.create(params);
@@ -332,30 +379,31 @@ export class Model {
                     throw new ModelError('No content returned from Anthropic API');
                 }
 
-                // Handle tool calls
-                const toolUse = response.content.find((c: any) => c.type === 'tool_use');
-                if (toolUse) {
-                    return [
-                        {
-                            type: 'system',
-                            extractedResult: () => [toolUse],
+                const textContent = response.content
+                    .filter((c: any) => c.type === 'text')
+                    .map((c: any) => c.text || '')
+                    .join('');
+
+                const toolUses = response.content.filter((c: any) => c.type === 'tool_use');
+                if (toolUses.length > 0) {
+                    const toolCalls = toolUses.map((toolUse: any, index: number) => ({
+                        id: toolUse.id || `call_${Date.now()}_${index}`,
+                        type: 'function' as const,
+                        function: {
+                            name: toolUse.name,
+                            arguments: JSON.stringify(toolUse.input || {}),
                         },
-                    ];
+                    })) as ChatCompletionAssistantMessageParam['tool_calls'];
+
+                    return this.buildAchatResult({
+                        content: textContent,
+                        tool_calls: toolCalls,
+                    });
                 }
 
-                // Handle regular text response
-                const textContent: any = response.content.find((c: any) => c.type === 'text');
-                const messageContent = textContent?.text || '';
-
-                // Return as system response (may contain XML tool calls or TaskCompletion)
-                // Agent loop will extract tools and exit when no more tools remain
-                return [
-                    {
-                        type: 'system',
-                        extractedResult: () => messageContent,
-                        rawContentFromLlm: messageContent,
-                    },
-                ];
+                return this.buildAchatResult({
+                    content: textContent,
+                });
             }
         } catch (error: any) {
             const errorMsg = error.message || 'Unknown error';
@@ -366,7 +414,7 @@ export class Model {
     /**
      * Call Google Gemini API
      */
-    private async _callGemini(messages: any[], tools?: any[], stream: boolean = false): Promise<ModelResponse[]> {
+    private async _callGemini(messages: ChatCompletionMessageParam[], tools?: ToolSchema[], stream: boolean = false): Promise<ModelAchatResult> {
         if (!this.geminiClient) {
             throw new ModelError('Gemini client not initialized');
         }
@@ -421,38 +469,28 @@ export class Model {
                     // Convert Gemini function calls to OpenAI format
                     const toolCalls = functionCalls.map((fc: any, index: number) => ({
                         id: `call_${Date.now()}_${index}`,
-                        type: 'function',
+                        type: 'function' as const,
                         function: {
                             name: fc.name,
                             arguments: JSON.stringify(fc.args),
                         },
-                    }));
+                    })) as ChatCompletionAssistantMessageParam['tool_calls'];
 
-                    return [
-                        {
-                            type: 'user',
-                            extractedResult: () => ({
-                                role: 'assistant',
-                                content: fullContent,
-                                tool_calls: toolCalls,
-                            }),
-                        },
-                    ];
+                    return this.buildAchatResult({
+                        content: fullContent,
+                        tool_calls: toolCalls,
+                    });
                 }
 
                 // Return as system response (may contain XML tool calls or TaskCompletion)
                 // Agent loop will extract tools and exit when no more tools remain
-                return [
-                    {
-                        type: 'system',
-                        extractedResult: () => fullContent,
-                        rawContentFromLlm: fullContent,
-                    },
-                ];
+                return this.buildAchatResult({
+                    content: fullContent,
+                });
             } else {
                 // Non-streaming
                 const result = await model.generateContent({ contents });
-                const response = result.response;
+                const response: any = result.response;
 
                 if (!response.candidates || response.candidates.length === 0) {
                     throw new ModelError('No candidates returned from Gemini API');
@@ -472,41 +510,29 @@ export class Model {
                 if (hasFunctionCalls) {
                     const toolCalls = functionCalls.map((part: any, index: number) => ({
                         id: `call_${Date.now()}_${index}`,
-                        type: 'function',
+                        type: 'function' as const,
                         function: {
                             name: part.functionCall.name,
                             arguments: JSON.stringify(part.functionCall.args),
                         },
-                    }));
+                    })) as ChatCompletionAssistantMessageParam['tool_calls'];
 
                     const textParts = content.parts.filter((part: any) => part.text);
                     const textContent = textParts.map((part: any) => part.text).join('');
 
-                    return [
-                        {
-                            type: 'user',
-                            extractedResult: () => ({
-                                role: 'assistant',
-                                content: textContent,
-                                tool_calls: toolCalls,
-                            }),
-                        },
-                    ];
+                    return this.buildAchatResult({
+                        content: textContent,
+                        tool_calls: toolCalls,
+                    });
                 }
-
-                // Handle regular text response
-                const textParts = content.parts.filter((part: any) => part.text);
-                const textContent = textParts.map((part: any) => part.text).join('');
 
                 // Return as system response (may contain XML tool calls or TaskCompletion)
                 // Agent loop will extract tools and exit when no more tools remain
-                return [
-                    {
-                        type: 'system',
-                        extractedResult: () => textContent,
-                        rawContentFromLlm: textContent,
-                    },
-                ];
+                const textParts = content.parts.filter((part: any) => part.text);
+                const textContent = textParts.map((part: any) => part.text).join('');
+                return this.buildAchatResult({
+                    content: textContent,
+                });
             }
         } catch (error: any) {
             const errorMsg = error.message || 'Unknown error';
@@ -517,7 +543,7 @@ export class Model {
     /**
      * Convert OpenAI format messages to Gemini format
      */
-    private _convertMessagesToGeminiFormat(messages: any[]): any[] {
+    private _convertMessagesToGeminiFormat(messages: ChatCompletionMessageParam[]): any[] {
         const contents: any[] = [];
 
         for (const message of messages) {
@@ -525,12 +551,12 @@ export class Model {
                 // Gemini doesn't have a separate system role, add as user message
                 contents.push({
                     role: 'user',
-                    parts: [{ text: message.content }],
+                    parts: [{ type: 'text', text: message.content }],
                 });
             } else if (message.role === 'user') {
                 contents.push({
                     role: 'user',
-                    parts: [{ text: message.content }],
+                    parts: [{ type: 'text', text: message.content }],
                 });
             } else if (message.role === 'assistant') {
                 const parts: any[] = [];
@@ -541,6 +567,7 @@ export class Model {
 
                 if (message.tool_calls) {
                     for (const toolCall of message.tool_calls) {
+                        if (!('function' in toolCall)) continue;
                         parts.push({
                             functionCall: {
                                 name: toolCall.function.name,
@@ -561,7 +588,7 @@ export class Model {
                     parts: [
                         {
                             functionResponse: {
-                                name: message.name,
+                                name: message.tool_call_id,
                                 response: {
                                     content: message.content,
                                 },

@@ -6,7 +6,16 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { fileTypeFromBuffer } from 'file-type';
+
+/**
+ * OpenAI vision API format for image content
+ */
+export interface ImageContent {
+    type: 'image_url';
+    image_url: {
+        url: string;
+    };
+}
 
 /**
  * MIME type mapping for image extensions
@@ -25,22 +34,13 @@ const MIME_TYPES: Record<string, string> = {
 const SUPPORTED_FORMATS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
 
 /**
- * Get MIME type
+ * Get MIME type from path or URL
  */
-async function getMimeType(params: { pathOrUrl: string, content: Buffer }): Promise<string> {
-    const { pathOrUrl, content } = params;
-    let mimeType = '';
-
-    if (content) {
-        const fileType = await fileTypeFromBuffer(content);
-        mimeType = fileType?.mime || '';
-    } else {
-        // Remove URL query parameters
-        const cleanPath = pathOrUrl.split('?')[0];
-        const ext = path.extname(cleanPath).toLowerCase();
-        mimeType = MIME_TYPES[ext] || 'image/jpeg';
-    }
-    return mimeType;
+function getMimeType(pathOrUrl: string): string {
+    // Remove URL query parameters
+    const cleanPath = pathOrUrl.split('?')[0];
+    const ext = path.extname(cleanPath).toLowerCase();
+    return MIME_TYPES[ext] || 'image/jpeg';
 }
 
 /**
@@ -58,7 +58,7 @@ export function isSupportedImageFile(imagePath: string): boolean {
 /**
  * Fetch URL content
  */
-async function fetchImageRemote(url: string): Promise<Buffer> {
+async function fetchUrl(url: string): Promise<Buffer> {
     const response = await fetch(url, {
         signal: AbortSignal.timeout(30000),
     });
@@ -72,17 +72,48 @@ async function fetchImageRemote(url: string): Promise<Buffer> {
 }
 
 /**
+ * Synchronously read image and convert to base64 format
+ *
+ * @param imagePath - Image path or URL
+ * @returns OpenAI vision API format image content
+ * @throws Error if image file not found or URL request fails
+ */
+export function readImage(imagePath: string): ImageContent {
+    const mimeType = getMimeType(imagePath);
+    let content: Buffer;
+
+    if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+        // For sync version, we don't support URL fetching
+        throw new Error('Synchronous URL fetching is not supported. Use areadImage instead.');
+    } else {
+        if (!fs.existsSync(imagePath)) {
+            throw new Error(`Image file not found: ${imagePath}`);
+        }
+        content = fs.readFileSync(imagePath);
+    }
+
+    const b64Content = content.toString('base64');
+    const dataUrl = `data:${mimeType};base64,${b64Content}`;
+
+    return {
+        type: 'image_url',
+        image_url: { url: dataUrl },
+    };
+}
+
+/**
  * Asynchronously read image and convert to base64 format
  *
  * @param imagePath - Image path or URL
  * @returns OpenAI vision API format image content
  * @throws Error if image file not found or URL request fails
  */
-export async function imageToBase64(imagePath: string): Promise<string> {
+export async function areadImage(imagePath: string): Promise<ImageContent> {
+    const mimeType = getMimeType(imagePath);
     let content: Buffer;
 
-    if (/^https?:\/\//i.test(imagePath)) {
-        content = await fetchImageRemote(imagePath);
+    if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+        content = await fetchUrl(imagePath);
     } else {
         if (!fs.existsSync(imagePath)) {
             throw new Error(`Image file not found: ${imagePath}`);
@@ -90,7 +121,11 @@ export async function imageToBase64(imagePath: string): Promise<string> {
         content = await fs.promises.readFile(imagePath);
     }
 
-    const mimeType = getMimeType({ pathOrUrl: imagePath, content });
+    const b64Content = content.toString('base64');
+    const dataUrl = `data:${mimeType};base64,${b64Content}`;
 
-    return `data:${mimeType};base64,${content.toString('base64')}`;
+    return {
+        type: 'image_url',
+        image_url: { url: dataUrl },
+    };
 }

@@ -4,25 +4,21 @@
  * Converts Python's core/agent.py to TypeScript
  */
 
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
-import { Model } from './model';
+import { Model, ModelAchatResult } from './model';
 import { MessageHistory } from '../runtime/memory';
-// IMPORTANT: Import from "../tools" to trigger tool registration via decorators
-// Now using TypeScript-native decorator system
 import { SystemToolStore, FunctionCallingStore, registerAgentAsTool } from '../tools';
-import { Toolcall } from '../schemas/toolCall';
-import { extractToolcallsFromStr } from '../utils/toolUtil';
-import { ModelConfig, ModelResponse, PostProcessor, ToolSchema } from '../types';
-import { Message as MemoryMessage } from '../schemas/message';
+import type { ModelConfig, PostProcessor, ToolSchema } from '../types';
 import { TOOLS_PROMPT, OUTPUT_FORMAT_PROMPT } from '../prompts/tools';
 import { logger } from '../utils';
 import { AgentConfig } from './agentConfig';
-import { LocalToolExecutor, createGeneratedToolcall, GeneratedToolcallProtocol, ToolExecutorProtocol } from '../runtime/executors';
+import { LocalToolExecutor, ToolExecutorProtocol } from '../runtime/executors';
 import { SKILLS_DIR } from '../configs/paths';
 import { areadImage } from '../utils/readImage';
 import { ChatCompletionFunctionTool } from 'openai/resources/index';
+import { AssistantMessage, ToolMessage, UserMessage } from '@/schemas/messageV2';
 
 /**
  * Main Agent class
@@ -53,7 +49,7 @@ export class Agent {
     private observeTimeout: number;
     private skills: string[];
 
-    constructor(config: AgentConfig) {
+    constructor(configInput: AgentConfig) {
         const {
             name,
             profile,
@@ -74,13 +70,14 @@ export class Agent {
             parallelExecution = false,
             observeTimeout = 60.0,
             skills = [],
-        } = config;
+            toolcallManagerPoolSize = 5,
+        } = configInput;
 
         // Identity and presentation
         this.name = name;
         this.profile = profile;
         this.verbose = verbose;
-        this.agentId = agentId || uuidv4();
+        this.agentId = agentId || randomUUID();
 
         // Model
         // Support both modelConfig (legacy) and udfModelName (new)
@@ -99,7 +96,11 @@ export class Agent {
 
         // Execution and runtime controls
         this.postProcessor = postProcessor;
-        this.executor = executor || new LocalToolExecutor(5, [SystemToolStore as any, FunctionCallingStore as any]);
+        this.executor = executor || new LocalToolExecutor({
+            poolSize: toolcallManagerPoolSize,
+            toolStores: [SystemToolStore as any, FunctionCallingStore as any],
+            timeout: observeTimeout
+        });
         this.autoShutdownExecutor = autoShutdownExecutor;
         this.parallelExecution = parallelExecution;
         this.observeTimeout = observeTimeout;
@@ -120,7 +121,7 @@ export class Agent {
 
         // Inject workspace hint into chat history (same as Python)
         if (this.workspaceDir) {
-            this.history.addMessage('user', `Your workspace directory is: ${this.workspaceDir}`);
+            this.history.addMessage(new UserMessage({ content: `Your workspace directory is: ${this.workspaceDir}` }));
         }
 
         // Debug: Print system prompt when verbose is enabled
@@ -241,25 +242,10 @@ export class Agent {
         return openaiToolCalls;
     }
 
-    /**
-     * Agent loop - processes user input and handles tool calls
-     * @private
-     */
-    private toGeneratedToolcall(toolcall: Toolcall): GeneratedToolcallProtocol {
-        return createGeneratedToolcall({
-            toolName: toolcall.name,
-            toolArguments: toolcall.input || {},
-            toolCallId: toolcall.toolCallId,
-            source: toolcall.type === 'user' ? 'function_call' : 'chat',
-            rawContentFromLlm: toolcall.rawContentFromLlm,
-        });
-    }
-
     private async _agentLoop(): Promise<string> {
         await this.executor?.start();
 
         while (true) {
-            // Truncate history to fit context window (now preserves tool call chains)
             this.history.truncate();
 
             if (typeof this.verbose === 'number' && this.verbose > 2) {
@@ -273,191 +259,43 @@ export class Agent {
                 ...(this.useMcp ? this.mcpTools : []),
             ];
             // Get response from model
-            const response: ModelResponse[] = await this.model.achat(
-                await this.history.formatForApi(),
+            const { assistantMessage, parsingFailedToolMessages }: ModelAchatResult = await this.model.achat(
+                this.history.formatForApi(),
                 functionTools.length > 0 ? functionTools : undefined
             );
 
-            // Extract system toolcall messages
-            const systemToolcallResponses = response
-                .filter(r => r.type === 'system')
-                .map(r => r.extractedResult())
-                .filter(r => typeof r === 'string') as string[];
+            this._processResponseIntoHistory([assistantMessage, ...parsingFailedToolMessages]);
 
-            if (systemToolcallResponses.length > 0) {
-                const systemToolcallResponse = systemToolcallResponses.join('\n');
-                this.history.addMessage('assistant', systemToolcallResponse);
-            }
-
-            // Extract user toolcall messages
-            const userToolcallMessages = response.filter(r => r.type === 'user').map(r => r.extractedResult());
-
-            if (userToolcallMessages.length > 0) {
-                // Flatten user toolcall messages
-                const userToolcallMessagesFlattened: any[] = [];
-                for (const item of userToolcallMessages) {
-                    if (Array.isArray(item)) {
-                        userToolcallMessagesFlattened.push(...item);
-                    } else {
-                        userToolcallMessagesFlattened.push(item);
-                    }
-                }
-
-                // Add each toolcall to history (these are assistant messages with tool_calls)
-                for (const toolcall of userToolcallMessagesFlattened) {
-                    this.history.addMessage(toolcall as any);
-                }
-            }
-
-            if (typeof this.verbose === 'number' && this.verbose > 1) {
-                const messages = await this.history.formatForApi();
-                const last3 = messages.slice(-3);
-                logger.debug(`History raw messages after extract toolcall messages (last 3):\n ${JSON.stringify(last3)}`);
-            }
-
-            logger.debug(`History usage: ${this.history.formattedContextUsage}`);
-
-            // Collect and extract all tool calls
-            const allToolCalls: Toolcall[] = [];
-
-            // Prepare system tool map for extraction
-            const systemToolMap: Record<string, any> = {};
-            const systemToolNames = SystemToolStore.listTools();
-            for (const name of systemToolNames) {
-                const tool = SystemToolStore.getTool(name);
-                if (tool) {
-                    systemToolMap[name] = tool;
-                }
-            }
-
-            for (const r of response) {
-                const result = r.extractedResult();
-
-                if (typeof result === 'string') {
-                    // Extract XML system tool calls
-                    if (result.trim().length > 0) {
-                        const extracted = extractToolcallsFromStr(result, systemToolMap);
-                        allToolCalls.push(...extracted);
-                    }
-                } else if (typeof result === 'object' && result !== null) {
-                    // Handle assistant message with tool_calls (from user/MCP tools)
-                    if (!Array.isArray(result) && result.role === 'assistant' && result.tool_calls && Array.isArray(result.tool_calls)) {
-                        for (const tc of result.tool_calls) {
-                            // OpenAI format: { id, type: 'function', function: { name, arguments } }
-                            if (tc.type === 'function' && tc.function) {
-                                let args = {};
-                                try {
-                                    args = JSON.parse(tc.function.arguments);
-                                } catch (e) {
-                                    logger.warn(`Failed to parse arguments for tool ${tc.function.name}: ${tc.function.arguments}`);
-                                    args = { raw_args: tc.function.arguments };
-                                }
-
-                                allToolCalls.push(
-                                    new Toolcall({
-                                        name: tc.function.name,
-                                        input: args,
-                                        toolCallId: tc.id,
-                                        type: 'user',
-                                        rawContentFromLlm: tc.function.arguments,
-                                    })
-                                );
-                            }
-                        }
-                    }
-                    // Handle array of tool calls (legacy format)
-                    else if (Array.isArray(result)) {
-                        for (const item of result) {
-                            // OpenAI format: { id, type: 'function', function: { name, arguments } }
-                            if (item.type === 'function' && item.function) {
-                                let args = {};
-                                try {
-                                    args = JSON.parse(item.function.arguments);
-                                } catch (e) {
-                                    logger.warn(`Failed to parse arguments for tool ${item.function.name}: ${item.function.arguments}`);
-                                    args = { raw_args: item.function.arguments };
-                                }
-
-                                allToolCalls.push(
-                                    new Toolcall({
-                                        name: item.function.name,
-                                        input: args,
-                                        toolCallId: item.id,
-                                        type: 'user',
-                                        rawContentFromLlm: item.function.arguments,
-                                    })
-                                );
-                            }
-                            // Anthropic format: { id, type: 'tool_use', name, input }
-                            else if (item.type === 'tool_use') {
-                                allToolCalls.push(
-                                    new Toolcall({
-                                        name: item.name,
-                                        input: item.input,
-                                        toolCallId: item.id,
-                                        type: 'user',
-                                    })
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (allToolCalls.length > 0) {
-                const generatedToolcalls = allToolCalls.map(tc => this.toGeneratedToolcall(tc));
-
-                await this.executor?.submitMany(generatedToolcalls);
-                const observedToolcalls = await this.executor?.observe({ wait: true, timeout: this.observeTimeout });
-
+            const agentToolCalls = assistantMessage.agent_tool_calls ?? [];
+            if (agentToolCalls.length > 0) {
+                this.executor?.submitAndExecute(agentToolCalls);
+                const observedToolcalls = await this.executor?.observe();
                 for (const obs of observedToolcalls || []) {
-                    const metadata = obs.metadata;
-                    let executedContent = '';
-                    if (obs.result instanceof MemoryMessage) {
-                        executedContent = obs.result.content;
-                    } else if (typeof obs.result === 'string') {
-                        executedContent = obs.result;
-                    } else {
-                        executedContent = String(obs.result);
-                    }
-
-                    const tc = new Toolcall({
-                        name: metadata.toolName,
-                        input: metadata.toolArguments,
-                        toolCallId: metadata.toolCallId,
-                        type: metadata.source === 'function_call' ? 'user' : 'system',
-                        isExtractedSuccess: metadata.isSuccess,
-                        failedExtractedReason: metadata.failedReason,
-                        rawContentFromLlm: metadata.rawContentFromLlm,
-                        executedState: obs.isSuccess ? 'success' : 'failed',
-                        executedContent,
-                    });
-
-                    const executedResult = tc.executedResult();
-                    if (typeof executedResult === 'string') {
-                        this.history.addMessage('user', executedResult);
-                    } else {
-                        this.history.addMessage(executedResult as any);
-                    }
+                    this.history.addMessage(obs);
                 }
+            } else if (typeof assistantMessage.content === 'string' && assistantMessage.content.trim().length > 0) {
+                return assistantMessage.content
+                    .replace(/<TaskCompletion>/g, '')
+                    .replace(/<\/TaskCompletion>/g, '')
+                    .trim();
             } else {
-                // No tool calls - extract text from system responses and strip TaskCompletion tags
-                for (const r of response) {
-                    if (r.type === 'system') {
-                        const result = r.extractedResult();
-                        if (typeof result === 'string') {
-                            // Strip TaskCompletion tags (matching Python behavior)
-                            const cleanResult = result
-                                .replace(/<TaskCompletion>/g, '')
-                                .replace(/<\/TaskCompletion>/g, '')
-                                .trim();
-                            return cleanResult;
-                        }
-                    }
-                }
-                return ''; // No content found
+                return '';
             }
         }
+    }
+
+    /**
+     * Adds system and user toolcall assistant messages from a model response batch into history.
+     */
+    private _processResponseIntoHistory(response: (AssistantMessage | ToolMessage)[]): void {
+        response.forEach(msg => this.history.addMessage(msg));
+
+        if (typeof this.verbose === 'number' && this.verbose > 1) {
+            const messages = this.history.formatForApi();
+            const last3 = messages.slice(-3);
+            logger.debug(`History raw messages after extract toolcall messages (last 3):\n ${JSON.stringify(last3)}`);
+        }
+        logger.debug(`History usage: ${this.history.formattedContextUsage}`);
     }
 
     private async _prepareInput(
@@ -466,9 +304,10 @@ export class Agent {
     ): Promise<void> {
         const imagesList = images ? (Array.isArray(images) ? images : [images]) : [];
         const imageContents = await Promise.all(imagesList.map(img => areadImage(img)));
-        const instructionMsg = new MemoryMessage('user', instruction || '');
-        instructionMsg.imagesContent = imageContents;
+        const instructionMsg = new UserMessage({ content: [{ type: 'text', text: instruction }, ...imageContents] });
+
         this.history.addMessage(instructionMsg);
+
         if (this.verbose) {
             logger.info(`\n[${this.name}] Received: ${instruction}`);
         }
@@ -557,6 +396,14 @@ export class Agent {
      */
     getFunctionCallingTools(): any[] {
         return [...this.functionCallingTools];
+    }
+
+    /**
+     * Set function calling tools
+     * Warning: This overwrites existing tools
+     */
+    setFunctionCallingToolsFlag(useFunctionCalling: boolean): void {
+        this.useFunctionCalling = useFunctionCalling;
     }
 
     /**

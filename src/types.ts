@@ -2,26 +2,7 @@
  * Core type definitions for evoltagent
  */
 
-import { PostProcessor } from './hooks';
-
-// Message types
-export interface Message {
-    role: 'system' | 'user' | 'assistant' | 'tool';
-    content: string;
-    images?: string | string[];
-    type?: string;
-}
-
-export interface ToolCall {
-    type: 'system' | 'user';
-    extractedResult: () => string;
-}
-
-export interface ModelResponse {
-    type: 'system' | 'user' | 'TaskCompletion';
-    extractedResult: () => string | any[] | Record<string, any>;
-    rawContentFromLlm?: string;
-}
+import type { PostProcessor } from './hooks';
 
 // Tool types
 export interface ToolDescription {
@@ -78,6 +59,7 @@ export interface ToolStore {
     readonly length: number;
     toToolSchema: (name: string, tool: ToolDescription, provider?: string) => any;
     getToolcallSchema: (toolName: string, provider?: string) => any;
+    _getInternalToolsMap?: () => Map<string, ToolDescription>;
 }
 
 // Model configuration types

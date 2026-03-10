@@ -114,8 +114,11 @@ export class BaseOrchestrator {
     }
 
     /**
-     * Check if instruction contains an agent name
+     * Set available agent names (for testing)
      */
+    setAvailableAgentNames(names: string[]) {
+        this.agents = this.agents.filter(a => names.includes(a.name));
+    }
     private hasAgentName(instruction: string): boolean {
         if (!instruction.includes('@')) {
             return false;

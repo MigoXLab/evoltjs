@@ -5,7 +5,11 @@
  */
 
 import { logger } from './index';
-import { Toolcall, ToolcallState, ToolcallType } from '../schemas/toolCall';
+import { Toolcall } from '../schemas/toolCall';
+import type { ToolcallState, ToolcallType } from '../schemas/toolCall';
+import { ToolStore } from '@/types';
+import { AgentToolcall } from '@/schemas/toolcallv3';
+import crypto from 'crypto';
 
 // Re-export for convenience
 export { Toolcall, ToolcallState, ToolcallType };
@@ -157,10 +161,10 @@ export function convertStrToObject(txt: string, toolName: string, argNames: stri
 /**
  * Extract tool calls from string
  */
-export function extractToolcallsFromStr(txt: string, toolStore: Record<string, any>): Toolcall[] {
-    const matches: Array<[number, Toolcall]> = [];
+export function extractToolcallsFromStr(txt: string, toolStore: ToolStore): AgentToolcall[] {
+    const matches: Array<[number, AgentToolcall]> = [];
 
-    for (const toolName of Object.keys(toolStore)) {
+    for (const toolName of toolStore.keys()) {
         const pattern = new RegExp(`<${escapeRegExp(toolName)}>(.*?)</${escapeRegExp(toolName)}>`, 'gs');
         let match: RegExpExecArray | null;
 
@@ -170,32 +174,32 @@ export function extractToolcallsFromStr(txt: string, toolStore: Record<string, a
             if (!isWriteJsonFile(argumentsTxt, toolName) && argumentsTxt.startsWith('{') && argumentsTxt.endsWith('}')) {
                 matches.push([
                     match.index,
-                    new Toolcall({
-                        name: toolName,
-                        input: {},
-                        isExtractedSuccess: false,
-                        type: 'system',
-                        rawContentFromLlm: txt,
-                    }),
+                    {
+                        tool_name: toolName,
+                        tool_arguments: {},
+                        tool_call_id: 'ct_' + crypto.randomUUID(),
+                        source: 'chat',
+                    } as AgentToolcall,
                 ]);
                 continue;
             }
 
             const rawInput = `<${toolName}>${argumentsTxt}</${toolName}>`;
-            let pythonObjectInput: Record<string, any> = {};
+            let args: Record<string, any> = {};
 
             if (rawInput) {
-                const argNames = toolStore[toolName].argNames || [];
-                pythonObjectInput = convertStrToObject(rawInput, toolName, argNames);
+                const argNames = toolStore.getItem(toolName).argNames;
+                args = convertStrToObject(rawInput, toolName, argNames);
             }
 
             matches.push([
                 match.index,
-                new Toolcall({
-                    name: toolName,
-                    input: pythonObjectInput,
-                    type: 'system',
-                }),
+                {
+                    tool_name: toolName,
+                    tool_arguments: args,
+                    tool_call_id: 'ct_' + crypto.randomUUID(),
+                    source: 'chat',
+                } as AgentToolcall,
             ]);
         }
     }
