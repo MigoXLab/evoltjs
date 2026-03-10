@@ -59,7 +59,7 @@ export type AnyMessage = SystemMessage | UserMessage | AssistantMessage | ToolMe
  * All shared methods live here. Subclasses define `role` and
  * override `getExtraFields()` to expose role-specific fields.
  */
-export abstract class Message {
+abstract class Message {
     abstract readonly role: MessageRole;
 
     content: MessageContent;
