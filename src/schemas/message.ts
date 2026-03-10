@@ -182,58 +182,6 @@ export abstract class Message {
 
         return `Message(${parts.join(', ')})`;
     }
-
-    // ------------------------------------------------------------------
-    // Merge & Clone
-    // ------------------------------------------------------------------
-
-    /** Merge two messages of the same role into one. */
-    merge(other: Message): Message {
-        if (this.role !== other.role) {
-            throw new Error('Messages must have the same role to merge');
-        }
-
-        let content: MessageContent;
-        const selfContent = this.content;
-        const otherContent = other.content;
-
-        if (typeof selfContent === 'string' && typeof otherContent === 'string') {
-            if (this.tag !== other.tag) {
-                content =
-                    (this.formatContent(selfContent, this.tag) as string)
-                    + '\n'
-                    + (this.formatContent(otherContent, other.tag) as string);
-            } else {
-                content = this.formatContent(
-                    selfContent + '\n' + otherContent,
-                    this.tag,
-                ) as string;
-            }
-        } else if (typeof selfContent === 'string' && Array.isArray(otherContent)) {
-            content = [
-                { type: 'text' as const, text: this.formatContent(selfContent, this.tag) as string },
-                ...otherContent,
-            ];
-        } else if (Array.isArray(selfContent) && typeof otherContent === 'string') {
-            content = [
-                ...selfContent,
-                { type: 'text' as const, text: this.formatContent(otherContent, other.tag) as string },
-            ];
-        } else {
-            // both are ContentPart[]
-            content = [
-                ...(selfContent as ChatCompletionContentPart[]),
-                ...(otherContent as ChatCompletionContentPart[]),
-            ];
-        }
-
-        const Ctor = this.constructor as new (params: any) => Message;
-        return new Ctor({
-            content,
-            tag: this.tag !== other.tag ? '' : this.tag,
-            ...this.getExtraFields(),
-        });
-    }
 }
 
 // ------------------------------------------------------------------

@@ -17,7 +17,7 @@ import { AgentConfig } from './agentConfig';
 import { LocalToolExecutor, ToolExecutorProtocol } from '../runtime/executors';
 import { SKILLS_DIR } from '../configs/paths';
 import { areadImage } from '../utils/readImage';
-import { ChatCompletionFunctionTool } from 'openai/resources/index';
+import { ChatCompletionFunctionTool, ChatCompletionMessageParam } from 'openai/resources/index';
 import { AssistantMessage, ToolMessage, UserMessage } from '@/schemas/message';
 
 /**
@@ -117,7 +117,7 @@ export class Agent {
 
         // Conversation state
         const modelNameForHistory = typeof this.modelConfig === 'string' ? this.modelConfig : this.modelConfig.model || 'deepseek';
-        this.history = new MessageHistory(modelNameForHistory, this.system, this.model.getConfig().contextWindowTokens);
+        this.history = new MessageHistory({ model: modelNameForHistory, system: this.system, contextWindowTokens: this.model.getConfig().contextWindowTokens });
 
         // Inject workspace hint into chat history (same as Python)
         if (this.workspaceDir) {
@@ -273,13 +273,8 @@ export class Agent {
                 for (const obs of observedToolcalls || []) {
                     this.history.addMessage(obs);
                 }
-            } else if (typeof assistantMessage.content === 'string' && assistantMessage.content.trim().length > 0) {
-                return assistantMessage.content
-                    .replace(/<TaskCompletion>/g, '')
-                    .replace(/<\/TaskCompletion>/g, '')
-                    .trim();
             } else {
-                return '';
+                return typeof assistantMessage.content === 'string' ? assistantMessage.content : '';
             }
         }
     }
@@ -296,6 +291,10 @@ export class Agent {
             logger.debug(`History raw messages after extract toolcall messages (last 3):\n ${JSON.stringify(last3)}`);
         }
         logger.debug(`History usage: ${this.history.formattedContextUsage}`);
+    }
+
+    resetHistory(messages: ChatCompletionMessageParam[]): void {
+        this.history.reset(messages);
     }
 
     private async _prepareInput(
@@ -334,7 +333,7 @@ export class Agent {
     /**
      * Run the agent with given instruction
      */
-    async run(instruction: string = '', images?: string | string[]): Promise<string | any> {
+    async run(instruction: string = '', images?: string | string[]): Promise<string> {
         let cleanupMcpConnections: () => Promise<void> = async () => { };
 
         try {

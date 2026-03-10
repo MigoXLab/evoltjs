@@ -111,4 +111,33 @@ export abstract class Environment {
      * @returns Feedback with isPassing status and feedback message
      */
     abstract step(...args: any[]): Promise<Feedback>;
+
+    /**
+     * Shutdown the environment
+     *
+     * Called when the evaluation is complete or interrupted.
+     * Override to clean up resources.
+     */
+    async shutdown(): Promise<void> {
+        // Default implementation does nothing
+        // Override in subclasses if cleanup is needed
+    }
+
+    /**
+     * Wait for the environment to complete all tasks
+     */
+    async wait(): Promise<void> {
+        // wait for the environment to complete all tasks
+    }
+
+    /**
+     * Evaluate the environment on a benchmark
+     *
+     * TODO: Add benchmark support for self-evolving
+     *
+     * @returns Whether the benchmark passed
+     */
+    async bench(): Promise<boolean> {
+        throw new Error('bench() is not implemented');
+    }
 }

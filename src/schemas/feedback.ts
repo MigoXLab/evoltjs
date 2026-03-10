@@ -5,11 +5,7 @@
  * Used by ReflexionOrchestrator for environment feedback
  */
 
-import { UserMessage, type AnyMessage } from './message';
-
-// ------------------------------------------------------------------
-// Feedback
-// ------------------------------------------------------------------
+import { UserMessage } from './message';
 
 /**
  * Feedback class representing evaluation results from an Environment
@@ -23,13 +19,15 @@ export class Feedback {
     /** Whether the test/evaluation passed */
     isPassing: boolean;
 
-    /** Detailed feedback message (any of the 4 message subclasses) */
-    message: AnyMessage;
+    /**
+     * Detailed feedback message
+     */
+    message: UserMessage;
 
-    constructor(isPassing: boolean = false, message?: AnyMessage) {
+    constructor(isPassing: boolean = false, feedback?: UserMessage) {
         this.isPassing = isPassing;
         this.message =
-            message ??
+            feedback ||
             new UserMessage({ content: 'No feedback provided. Please check feedback settings.' });
 
         this._validate();
@@ -41,7 +39,7 @@ export class Feedback {
     // ------------------------------------------------------------------
 
     private _validate(): void {
-        if (!this.message.isTruthy()) {
+        if (!this.message.content) {
             throw new Error('Feedback content cannot be empty');
         }
     }

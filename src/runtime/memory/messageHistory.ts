@@ -100,7 +100,7 @@ export class MessageHistory {
     // Tracks accumulated tokens including truncated history.
     private accumulatedTokens = 0;
 
-    constructor(model: string, system: string, contextWindowTokens: number, enableCaching: boolean = true) {
+    constructor({ model, system, contextWindowTokens, enableCaching = true }: { model: string, system: string, contextWindowTokens: number, enableCaching?: boolean }) {
         this.model = model;
         this.system = system;
         this.contextWindowTokens = contextWindowTokens;
@@ -352,6 +352,11 @@ Current Context Usage:
         this.messageCosts = [];
         this.accumulatedTokens = 0;
         this.totalTokens = this.systemTokens;
+    }
+
+    reset(messages: ChatCompletionMessageParam[]): void {
+        this.clear();
+        messages.forEach(message => this._addMessage(message));
     }
 
     /**
