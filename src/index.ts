@@ -17,6 +17,19 @@ export { AnyMessage, AssistantMessage, ToolMessage, UserMessage } from './schema
 // Runtime: Memory exports (moved from memory/ to runtime/memory/)
 export { MessageHistory } from './runtime/memory';
 
+// Runtime: Orchestrator exports (renamed from environment/)
+export {
+    InstructionType,
+    BaseOrchestrator,
+    CodingOrchestrator,
+    // Backward-compatible aliases
+    BaseEnvironment,
+    CodingEnvironment,
+} from './runtime/orchestrator';
+
+// Runtime: Environment exports (NEW - for Reflexion)
+export { Environment, EnvironmentOptions } from './runtime/environment';
+
 // Runtime: Executors exports
 export {
     LocalToolExecutor,
@@ -48,10 +61,12 @@ export {
     ReflectTool,
     SkillsTool,
     GitTool,
+    ImageTool,
+    PatchTool,
 } from './tools';
 
-// Orchestrator exports
-export { BaseOrchestrator, CodingOrchestrator } from './runtime/orchestrator';
+// Prompts exports
+export { TOOLS_PROMPT, OUTPUT_FORMAT_PROMPT } from './prompts';
 
 // Config exports
 export { loadModelConfig } from './configs/configLoader';
@@ -61,6 +76,9 @@ export * from './configs/settings';
 
 // Type exports
 export * from './types';
+
+// Utility exports
+export { markDeprecated, isSupportedImageFile, readImage, areadImage, ImageContent } from './utils';
 
 // Logger export
 export { default as logger } from './utils/logger';

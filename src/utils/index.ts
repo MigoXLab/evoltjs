@@ -4,8 +4,9 @@
 
 export { AsyncExitStack } from './connections';
 export { isWriteJsonFile, convertStrToObject, extractToolcallsFromStr } from './toolUtil';
-export { MessageCost } from './cost';
 import loggers from './logger';
+export { markDeprecated } from './deprecated';
+export { isSupportedImageFile, readImage, areadImage, ImageContent } from './readImage';
 
 export const logger = loggers.getDisableLog() ? loggers.dummyLogger : loggers.enhancedLogger;
 // streamLogger already handles getDisableLog() internally in createStreamLogger
