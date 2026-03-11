@@ -32,21 +32,20 @@ export interface ModelAchatResult {
  * Uses official SDKs for better reliability and type safety
  */
 export class Model {
-    private modelName: string;
     private config: ModelConfig;
+    private maxEmptyRetries: number;
     private openaiClient?: OpenAI;
     private anthropicClient?: Anthropic;
     private geminiClient?: GoogleGenerativeAI;
 
-    constructor(model?: string | ModelConfig) {
+    constructor(model?: string | ModelConfig, maxEmptyRetries?: number) {
         if (typeof model === 'string' || model === undefined) {
-            this.modelName = model || 'deepseek';
-            this.config = loadModelConfig(this.modelName);
+            this.config = loadModelConfig(model || 'deepseek');
         } else {
             // model is ModelConfig object
             this.config = model;
-            this.modelName = model.model || 'deepseek';
         }
+        this.maxEmptyRetries = maxEmptyRetries ?? 3;
 
         // Initialize the appropriate client based on provider
         this._initializeClient();
@@ -95,20 +94,55 @@ export class Model {
         const useStream = stream !== undefined ? stream : !!this.config.stream;
 
         try {
-            switch (provider) {
-                case 'openai':
-                case 'deepseek':
-                case 'anthropic':
-                    return this._callOpenAICompatible(messages, tools, useStream);
-                case 'gemini':
-                    return this._callGemini(messages, tools, useStream);
-                default:
-                    throw new ModelError(`Unsupported provider: ${provider}`);
-            }
+            return this._callWithRetry(async () => {
+                switch (provider) {
+                    case 'openai':
+                    case 'deepseek':
+                    case 'anthropic':
+                        return this._callOpenAICompatible(messages, tools, useStream);
+                    case 'gemini':
+                        return this._callGemini(messages, tools, useStream);
+                    default:
+                        throw new ModelError(`Unsupported provider: ${provider}`);
+                }
+            });
         } catch (error) {
             logger.error(`Model call failed: ${error}`);
             throw error;
         }
+    }
+
+    private isValidAchatResult(result: ModelAchatResult): boolean {
+        const msg = result.assistantMessage;
+        if (msg.tool_calls && msg.tool_calls.length > 0) {
+            return true;
+        }
+        if ((msg.agent_tool_calls || []).some(tc => tc.tool_name !== 'TaskCompletion')) {
+            return true;
+        }
+        return typeof msg.content === 'string' && msg.content.trim().length > 0;
+    }
+
+    private async _callWithRetry(handler: () => Promise<ModelAchatResult>): Promise<ModelAchatResult> {
+        const maxRetries = this.maxEmptyRetries;
+        let lastResult: ModelAchatResult | null = null;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            const result = await handler();
+            lastResult = result;
+            if (this.isValidAchatResult(result)) {
+                return result;
+            }
+
+            if (attempt < maxRetries) {
+                logger.warn(`[${this.config.model}] Empty response (attempt ${attempt}/${maxRetries}), retrying...`);
+                const backoffSeconds = Math.min(Math.max(0.5 * Math.pow(2, attempt - 1), 0.5), 4);
+                await new Promise(resolve => setTimeout(resolve, backoffSeconds * 1000));
+            }
+        }
+
+        logger.error(`[${this.config.model}] Empty response persisted after ${maxRetries} attempts`);
+        return lastResult as ModelAchatResult;
     }
 
     /**
@@ -613,7 +647,7 @@ export class Model {
      * Get model name
      */
     getName(): string {
-        return this.modelName;
+        return this.config.model;
     }
 
     /**

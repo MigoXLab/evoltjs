@@ -64,37 +64,17 @@ export interface ToolStore {
 
 // Model configuration types
 export interface ModelConfig {
-    provider: string;
+    // link parameters
     model: string;
+    provider: string;
     apiKey: string;
     baseUrl: string;
+    // core parameters
     contextWindowTokens: number;
     maxOutputTokens?: number;
     temperature?: number;
     topP?: number;
     stream?: boolean;
-    [key: string]: any;
-}
-
-// Agent configuration types
-export interface AgentConfig {
-    name: string;
-    profile: string;
-    system?: string;
-    tools?: string[];
-    subAgents?: any[];
-    mcpServerNames?: string[];
-    modelConfig?: string | ModelConfig;
-    verbose?: boolean | number;
-    useFunctionCalling?: boolean;
-    postProcessor?: PostProcessor;
-    toolcallManagerPoolSize?: number;
-}
-
-// Environment types
-export interface EnvironmentConfig {
-    workspace?: string;
-    [key: string]: any;
 }
 
 // Exception types
