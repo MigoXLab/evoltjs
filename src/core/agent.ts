@@ -266,13 +266,16 @@ export class Agent {
 
             this._processResponseIntoHistory([assistantMessage, ...parsingFailedToolMessages]);
 
-            const agentToolCalls = assistantMessage.agent_tool_calls ?? [];
-            if (agentToolCalls.length > 0) {
+            const agentToolCalls = assistantMessage.agent_tool_calls?.filter(toolcall => SystemToolStore.hasTool(toolcall.tool_name) || FunctionCallingStore.hasTool(toolcall.tool_name));
+
+            if (agentToolCalls && agentToolCalls.length > 0) {
                 this.executor?.submitAndExecute(agentToolCalls);
                 const observedToolcalls = await this.executor?.observe();
                 for (const obs of observedToolcalls || []) {
                     this.history.addMessage(obs);
                 }
+            } else if (parsingFailedToolMessages.length) {
+                continue;
             } else {
                 return typeof assistantMessage.content === 'string' ? assistantMessage.content : '';
             }

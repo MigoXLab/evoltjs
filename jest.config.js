@@ -1,5 +1,5 @@
 /** @type {import('jest').Config} */
-module.exports = {
+const config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/tests'],
@@ -19,5 +19,8 @@ module.exports = {
   ],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1'
-  }
+  },
+  "transform": { "^.+\\.ts$": ["ts-jest", { "diagnostics": false }] }
 };
+
+export default config;

@@ -189,7 +189,7 @@ export class LocalToolExecutor implements ToolExecutorProtocol {
     private _activeBackgroundJobs: Map<string, BackgroundJob> = new Map();
 
     private _totalSubmitted: number = 0;
-    private _totalFinished: number = 0;
+    private _totalObserved: number = 0;
     private _totalFailed: number = 0;
 
     private _started: boolean = false;
@@ -350,7 +350,7 @@ export class LocalToolExecutor implements ToolExecutorProtocol {
         // 2. Flush any background jobs that finished while we were waiting
         this._flushCompletedBackgroundJobs();
 
-        // 3. Collect true finalized results
+        // 3. Collect true finalized results and clear
         const results = this._observedResults.splice(0);
 
         // 4. Dynamically generate snapshots for jobs STILL running in the background
@@ -410,9 +410,9 @@ export class LocalToolExecutor implements ToolExecutorProtocol {
             maxConcurrency: this._poolSize,
             pendingCount: this._submittedTasks.length,
             runningCount: this._runningTasks.size,
-            finishedCount: this._totalFinished,
+            finishedCount: this._observedResults.length,
             totalSubmitted: this._totalSubmitted,
-            totalFinished: this._totalFinished,
+            totalObserved: this._totalObserved,
             totalFailed: this._totalFailed,
         };
     }
@@ -439,7 +439,7 @@ export class LocalToolExecutor implements ToolExecutorProtocol {
             this._successTasks.set(toolCallId, result);
         }
         this._observedResults.push(result);
-        this._totalFinished++;
+        this._totalObserved++;
     }
 
     // -------------------------------------------------------------------------
@@ -466,7 +466,7 @@ export class LocalToolExecutor implements ToolExecutorProtocol {
 
         try {
             logger.debug(`Starting execution: ${toolcall.tool_name}(${JSON.stringify(toolcall.tool_arguments)})`);
-            this._dispatchToolcall(toolcall, signal);
+            await this._dispatchToolcall(toolcall, signal);
         } finally {
             _currentExecutor = prev;
             this._semaphoreAvailable++;

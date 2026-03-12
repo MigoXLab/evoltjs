@@ -20,7 +20,7 @@ export interface ExecutorStatus {
     runningCount: number;
     finishedCount: number;
     totalSubmitted: number;
-    totalFinished: number;
+    totalObserved: number;
     totalFailed: number;
 }
 
