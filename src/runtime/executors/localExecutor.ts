@@ -198,12 +198,12 @@ export class LocalToolExecutor implements ToolExecutorProtocol {
     // Internal controller to manage current execution session timeouts and cancellations
     private _sessionController: AbortController = new AbortController();
 
-    private static readonly _CMDLINE_HANDLERS: Record<string, string> = {
-        'CommandLineTool.execute': 'executeCommand',
-        'CommandLineTool.list': 'listBackgroundProcesses',
-        'CommandLineTool.stop': 'stopBackgroundProcess',
-        'CommandLineTool.cleanup': 'cleanupBackgroundProcesses',
-    };
+    private static readonly _AVAILABLE_COMMANDS: string[] = [
+        'CommandLineTool.execute',
+        'CommandLineTool.list',
+        'CommandLineTool.stop',
+        'CommandLineTool.cleanup',
+    ]
 
     constructor(options?: {
         poolSize?: number;
@@ -381,6 +381,11 @@ export class LocalToolExecutor implements ToolExecutorProtocol {
         return results;
     }
 
+    /**
+     * Wait until all submitted tool calls are finished
+     * If waitAll() is called after observe(), it will return when timeout is reached or all submitted tool calls are finished.
+     * If waitAll() is called before observe(), it will wait until all submitted tool calls are finished.
+     */
     async waitAll(): Promise<void> {
         if (this._runningTasks.size > 0) {
             logger.debug(`Waiting for ${this._runningTasks.size} tasks to complete...`);
@@ -479,9 +484,7 @@ export class LocalToolExecutor implements ToolExecutorProtocol {
      * Returns null if it transitions into the background (handled by executeCommand).
      */
     private async _dispatchToolcall(toolcall: AgentToolcall, signal: AbortSignal): Promise<void> {
-        const handlerName = LocalToolExecutor._CMDLINE_HANDLERS[toolcall.tool_name];
-
-        if (!handlerName) {
+        if (!LocalToolExecutor._AVAILABLE_COMMANDS.includes(toolcall.tool_name)) {
             const result: ToolMessage = await _executeSingleTool(toolcall, this._toolStores);
             this._storeFinalResult(toolcall.tool_call_id, result);
             return;
@@ -508,7 +511,7 @@ export class LocalToolExecutor implements ToolExecutorProtocol {
             } else if (toolcall.tool_name === 'CommandLineTool.cleanup') {
                 resultContent = await this.cleanupBackgroundProcesses();
             } else {
-                throw new Error(`Handler '${handlerName}' not found on executor`);
+                throw new Error(`Handler of ${toolcall.tool_name} not found on executor`);
             }
         } catch (e) {
             logger.error(`Exception occurred while executing tool ${toolcall.tool_name}: ${e}`);
