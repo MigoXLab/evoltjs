@@ -5,10 +5,24 @@
  */
 
 import { ChatCompletionContentPart, ChatCompletionContentPartImage, ChatCompletionContentPartText, ChatCompletionMessageParam } from 'openai/resources/chat/completions';
-import { encodingForModel, getEncoding, Tiktoken } from 'js-tiktoken';
 import { AnyMessage, MessageContent } from '../../schemas/message';
+import { LRUCache } from 'lru-cache';
+import { cloneDeep } from 'lodash';
+import { estimateTokens } from '@/utils/cost';
 
 type PersistRecord = { data?: { message?: ChatCompletionMessageParam } };
+type ContextUsage = {
+    /** Maximum number of tokens available in the model context window. */
+    context_window_tokens: number;
+    /** Tokens currently occupied by messages in active history. */
+    used_tokens: number;
+    /** Ratio of used tokens to context window, expressed as a percentage. */
+    used_percentage: number;
+    /** Number of messages currently stored in history. */
+    messages_length: number;
+    /** Cumulative LLM call tokens (sum of assistant turns input+output). */
+    total_used_tokens: number;
+};
 
 // ------------------------------------------------------------------
 // Pure formatting helpers for history-level processing
@@ -83,38 +97,77 @@ function formatStoredMessageForApi(
     return msgCopy;
 }
 
+const formattedMessageCache = new LRUCache<string, ChatCompletionMessageParam>({
+    max: 5000,
+});
+
+function getFormattedMessageCacheKey(
+    rawMessage: ChatCompletionMessageParam,
+    options: {
+        isLastMessage: boolean;
+        enableCaching: boolean;
+        model: string;
+    }
+): string {
+    return `${options.model}|${options.enableCaching ? 1 : 0}|${options.isLastMessage ? 1 : 0}|${JSON.stringify(rawMessage)}`;
+}
+
+function formatStoredMessageForApiCached(
+    rawMessage: ChatCompletionMessageParam,
+    options: {
+        isLastMessage: boolean;
+        enableCaching: boolean;
+        model: string;
+    }
+): ChatCompletionMessageParam {
+    const cacheKey = getFormattedMessageCacheKey(rawMessage, options);
+    const cachedMessage = formattedMessageCache.get(cacheKey);
+    if (cachedMessage) {
+        return cachedMessage;
+    }
+    const formattedMessage = formatStoredMessageForApi(rawMessage, options);
+    formattedMessageCache.set(cacheKey, formattedMessage);
+    return formattedMessage;
+}
+
 /**
  * Message history class for managing conversation context
  */
 export class MessageHistory {
     private messages: ChatCompletionMessageParam[] = [];
     private model: string;
-    private system: string;
+    private systemMessage: ChatCompletionMessageParam;
     private contextWindowTokens: number;
-    private totalTokens = 0;
-    private systemTokens = 0;
     private enableCaching: boolean;
-    private tokenizer: Tiktoken | null = null;
     // Each assistant response tracks (input_tokens, output_tokens).
-    private messageCosts: Array<[number, number]> = [];
-    // Tracks accumulated tokens including truncated history.
-    private accumulatedTokens = 0;
+    private assistantMessageCosts: Array<[number, number]> = [];
+    private _truncationMessage: ChatCompletionMessageParam = {
+        role: 'user',
+        content: [{ type: 'text', text: '[Earlier history has been truncated.]' }],
+    };
 
     constructor({ model, system, contextWindowTokens, enableCaching = true }: { model: string, system: string, contextWindowTokens: number, enableCaching?: boolean }) {
         this.model = model;
-        this.system = system;
+        this.systemMessage = { role: 'system', content: system };
         this.contextWindowTokens = contextWindowTokens;
         this.enableCaching = enableCaching;
-        this.tokenizer = this.createTokenizer();
-        this.systemTokens = this.estimateMessageTokens({ role: 'system', content: this.system });
-        this.totalTokens = this.systemTokens;
     }
 
     /**
      * Add a message to history
      */
     addMessage(message: AnyMessage): void {
-        this._addMessage(message.formatForApi());
+        const formattedMessage = message.formatForApi();
+        this.messages.push(formattedMessage);
+        const { messageTokens, totalTokens } = this.buildFormattedSnapshot();
+        const lastMessageTokenCount = messageTokens[messageTokens.length - 1];
+
+        if (formattedMessage.role === 'assistant') {
+            this.assistantMessageCosts.push([
+                totalTokens - lastMessageTokenCount,
+                lastMessageTokenCount,
+            ]);
+        }
     }
 
     /**
@@ -127,91 +180,45 @@ export class MessageHistory {
                 continue;
             }
 
-            this._addMessage(message as ChatCompletionMessageParam);
+            this.messages.push(message as ChatCompletionMessageParam);
         }
     }
 
-    private _addMessage(message: ChatCompletionMessageParam): void {
-        this.messages.push(message);
-        const messageTokenCount = this.estimateMessageTokens(message);
-        this.totalTokens += messageTokenCount;
-        if (message.role === 'assistant') {
-            this.messageCosts.push([this.totalTokens - messageTokenCount, messageTokenCount]);
-        }
-    }
     /**
      * Get all messages
      */
     getMessages(): ChatCompletionMessageParam[] {
-        return [...this.messages];
+        return cloneDeep(this.messages);
     }
 
-    /**
-     * Get messages formatted for API calls
-     */
     formatForApi(): ChatCompletionMessageParam[] {
-        const history: ChatCompletionMessageParam[] = [];
-
-        for (let i = 0; i < this.messages.length; i++) {
-            history.push(
-                formatStoredMessageForApi(this.messages[i], {
-                    isLastMessage: i === this.messages.length - 1,
-                    enableCaching: this.enableCaching,
-                    model: this.model,
-                })
-            );
-        }
-
-        return [{ role: 'system', content: this.system }, ...history];
+        return this.buildFormattedSnapshot().formattedMessages;
     }
 
     /**
      * Update system prompt
      */
     updateSystem(system: string): void {
-        this.system = system;
-        const newSystemTokens = this.estimateMessageTokens({ role: 'system', content: this.system });
-        this.totalTokens = this.totalTokens - this.systemTokens + newSystemTokens;
-        this.systemTokens = newSystemTokens;
+        this.systemMessage = { role: 'system', content: system };
     }
 
     /**
      * Truncate history to fit context window
      */
     truncate(): void {
-        if (this.totalTokens <= this.contextWindowTokens) {
+        if (this.buildFormattedSnapshot().totalTokens <= this.contextWindowTokens) {
             return;
         }
 
-        const TRUNCATION_NOTICE_TOKENS = 25;
-        const TRUNCATION_MESSAGE: ChatCompletionMessageParam = {
-            role: 'user',
-            content: [{ type: 'text', text: '[Earlier history has been truncated.]' }],
-        };
-
-        const removeMessagePair = (): void => {
-            this.messages.shift();
-            this.messages.shift();
-
-            if (this.messageCosts.length > 0) {
-                const [inputTokens, outputTokens] = this.messageCosts.shift()!;
-                this.accumulatedTokens += inputTokens + outputTokens;
-                this.totalTokens -= inputTokens + outputTokens;
-            }
-        };
-
         while (
-            this.messageCosts.length > 0 &&
             this.messages.length >= 2 &&
-            this.totalTokens > this.contextWindowTokens
+            this.buildFormattedSnapshot().totalTokens > this.contextWindowTokens
         ) {
-            removeMessagePair();
+            this.messages.shift();
+            this.messages.shift();
 
-            if (this.messages.length > 0 && this.messageCosts.length > 0) {
-                const [originalInputTokens, originalOutputTokens] = this.messageCosts[0];
-                this.messages[0] = TRUNCATION_MESSAGE;
-                this.messageCosts[0] = [TRUNCATION_NOTICE_TOKENS, originalOutputTokens];
-                this.totalTokens += TRUNCATION_NOTICE_TOKENS - originalInputTokens;
+            if (this.messages.length > 0) {
+                this.messages[0] = this._truncationMessage;
             }
         }
     }
@@ -244,7 +251,7 @@ export class MessageHistory {
      */
     private estimateMessageTokens(message: ChatCompletionMessageParam): number {
         const messageText = this.messageToCountableText(message);
-        return this.estimateTokens(messageText);
+        return estimateTokens({ text: messageText, model: this.model });
     }
 
     /**
@@ -280,52 +287,16 @@ export class MessageHistory {
     }
 
     /**
-     * Estimate tokens for text (fallback approximation).
-     */
-    private estimateTokens(text: string): number {
-        if (!text) return 1;
-
-        if (this.tokenizer) {
-            try {
-                return Math.max(1, this.tokenizer.encode(text).length);
-            } catch {
-                // Fallback below.
-            }
-        }
-
-        return Math.max(1, Math.ceil(text.length / 4));
-    }
-
-    private createTokenizer(): Tiktoken | null {
-        const model = this.model.toLowerCase();
-
-        try {
-            if (model.includes('gpt')) {
-                // 对于所有gpt模型，动态指定模型tokenizer
-                if (model.includes('gpt-4o')) return encodingForModel('gpt-4o');
-                if (model.includes('gpt-4')) return encodingForModel('gpt-4');
-                if (model.includes('gpt-3.5')) return encodingForModel('gpt-3.5-turbo');
-                // 默认gpt都用cl100k_base
-                return getEncoding('cl100k_base');
-            } else {
-                // 其他模型默认用cl100k_base
-                return getEncoding('cl100k_base');
-            }
-        } catch {
-            return null;
-        }
-    }
-
-    /**
      * Get context usage details.
      */
-    get contextUsage(): Record<string, number> {
+    get contextUsage(): ContextUsage {
+        const { totalTokens } = this.buildFormattedSnapshot();
         return {
             context_window_tokens: this.contextWindowTokens,
-            used_tokens: this.totalTokens,
-            used_percentage: (this.totalTokens / this.contextWindowTokens) * 100,
+            used_tokens: totalTokens,
+            used_percentage: (totalTokens / this.contextWindowTokens) * 100,
             messages_length: this.messages.length,
-            total_used_tokens: this.accumulatedTokens + this.totalTokens,
+            total_used_tokens: this.assistantMessageCosts.reduce((acc, [inputTokens, outputTokens]) => acc + inputTokens + outputTokens, 0),
         };
     }
 
@@ -333,15 +304,15 @@ export class MessageHistory {
      * Get formatted context usage information.
      */
     get formattedContextUsage(): string {
-        const totalUsedTokens = this.accumulatedTokens + this.totalTokens;
+        const contextUsage = this.contextUsage;
         return `
-Current Context Usage:
-- History Messages Length: ${this.messages.length}
-- History Used Tokens: ${(this.totalTokens / 1000).toFixed(1)}k
-- Used Percentage: ${((this.totalTokens / this.contextWindowTokens) * 100).toFixed(1)}%
-- Context Window Tokens: ${Math.round(this.contextWindowTokens / 1000)}k
-- History Total Used Tokens: ${(totalUsedTokens / 1000).toFixed(1)}k
-`;
+            Current Context Usage:
+            - History Messages Length: ${contextUsage.messages_length}
+            - History Used Tokens: ${(contextUsage.used_tokens / 1000).toFixed(1)}k
+            - Used Percentage: ${((contextUsage.used_tokens / contextUsage.context_window_tokens) * 100).toFixed(1)}%
+            - Context Window Tokens: ${Math.round(contextUsage.context_window_tokens / 1000)}k
+            - History Total Used Tokens: ${(contextUsage.total_used_tokens / 1000).toFixed(1)}k
+        `;
     }
 
     /**
@@ -349,14 +320,12 @@ Current Context Usage:
      */
     clear(): void {
         this.messages = [];
-        this.messageCosts = [];
-        this.accumulatedTokens = 0;
-        this.totalTokens = this.systemTokens;
+        this.assistantMessageCosts = [];
     }
 
     reset(messages: ChatCompletionMessageParam[]): void {
         this.clear();
-        messages.forEach(message => this._addMessage(message));
+        messages.forEach(message => this.messages.push(message));
     }
 
     /**
@@ -373,7 +342,29 @@ Current Context Usage:
         return this.messages.length;
     }
 
+    getMessageCosts(): Array<[number, number]> {
+        return [...this.assistantMessageCosts];
+    }
+
     toString(): string {
         return this.messages.map(msg => JSON.stringify(msg)).join('\n');
+    }
+
+    private buildFormattedSnapshot(): { formattedMessages: ChatCompletionMessageParam[]; messageTokens: number[]; totalTokens: number } {
+        const history: ChatCompletionMessageParam[] = [];
+        for (let i = 0; i < this.messages.length; i++) {
+            history.push(
+                formatStoredMessageForApiCached(this.messages[i], {
+                    isLastMessage: i === this.messages.length - 1,
+                    enableCaching: this.enableCaching,
+                    model: this.model,
+                })
+            );
+        }
+
+        const formattedMessages = [this.systemMessage, ...history];
+        const messageTokens = formattedMessages.map(message => this.estimateMessageTokens(message));
+        const totalTokens = messageTokens.reduce((acc, token) => acc + token, 0);
+        return { formattedMessages, messageTokens, totalTokens };
     }
 }
